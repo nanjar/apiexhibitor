@@ -49,6 +49,7 @@ async function bootstrap() {
       .addTag('User Management', 'Daftar, undang, ubah permission, hapus/restore anggota booth')
       .addTag('Meeting', 'List, detail, approve/reject meeting request')
       .addTag('My Booth', 'Lead management - scan visitor, tambah manual, filter suhu Hot/Warm/Cold')
+      .addTag('Chat', 'Chat list (2 tab: visitor/exhibitor), riwayat pesan, kirim pesan')
       .build();
 
     const document = SwaggerModule.createDocument(app, config);
