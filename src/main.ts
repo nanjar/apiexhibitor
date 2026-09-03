@@ -48,6 +48,7 @@ async function bootstrap() {
       .addTag('Home', 'Home Dashboard - profil booth, lokasi, ringkasan lead & meeting')
       .addTag('User Management', 'Daftar, undang, ubah permission, hapus/restore anggota booth')
       .addTag('Meeting', 'List, detail, approve/reject meeting request')
+      .addTag('My Booth', 'Lead management - scan visitor, tambah manual, filter suhu Hot/Warm/Cold')
       .build();
 
     const document = SwaggerModule.createDocument(app, config);
