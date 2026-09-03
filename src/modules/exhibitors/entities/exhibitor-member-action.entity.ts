@@ -17,7 +17,7 @@ export class ExhibitorMemberAction {
   exhibitorId: number;
 
   @Column({ name: 'action', type: 'varchar', length: 10 })
-  action: 'INVITE' | 'ACTIVATE' | 'REMOVE' | 'RESTORE';
+  action: 'INVITE' | 'ACTIVATE' | 'REMOVE' | 'RESTORE' | 'UPDATE_PERMISSION';
 
   @Column({ name: 'actor_exhibitor_id', type: 'int' })
   actorExhibitorId: number;
