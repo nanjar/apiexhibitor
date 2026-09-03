@@ -7,6 +7,7 @@ import { ChatMessage } from './entities/chat-message.entity';
 import { GuestsTicket } from '../guests/entities/guests-ticket.entity';
 import { ExhibitorContact } from '../exhibitors/entities/exhibitor-contact.entity';
 import { ExhibitorCompany } from '../exhibitors/entities/exhibitor-company.entity';
+import { ExhibitorNotification } from '../notifications/entities/exhibitor-notification.entity';
 import { ChatController } from './chat.controller';
 import { ChatService } from './chat.service';
 
@@ -19,6 +20,7 @@ import { ChatService } from './chat.service';
       GuestsTicket,
       ExhibitorContact,
       ExhibitorCompany,
+      ExhibitorNotification,
     ]),
     PassportModule,
   ],

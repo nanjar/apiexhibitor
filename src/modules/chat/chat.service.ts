@@ -7,6 +7,7 @@ import { ChatMessage } from './entities/chat-message.entity';
 import { GuestsTicket } from '../guests/entities/guests-ticket.entity';
 import { ExhibitorContact } from '../exhibitors/entities/exhibitor-contact.entity';
 import { ExhibitorCompany } from '../exhibitors/entities/exhibitor-company.entity';
+import { ExhibitorNotification } from '../notifications/entities/exhibitor-notification.entity';
 import { CurrentExhibitor } from '../../common/decorators/current-exhibitor.decorator';
 
 export type ChatTabType = 'visitor' | 'exhibitor';
@@ -43,6 +44,8 @@ export class ChatService {
     private readonly contactRepo: Repository<ExhibitorContact>,
     @InjectRepository(ExhibitorCompany)
     private readonly companyRepo: Repository<ExhibitorCompany>,
+    @InjectRepository(ExhibitorNotification)
+    private readonly notificationRepo: Repository<ExhibitorNotification>,
   ) {}
 
   async listRooms(user: CurrentExhibitor, type: ChatTabType) {
@@ -135,6 +138,36 @@ export class ChatService {
           chatmemberId: membership.chatmemberId,
         })
         .execute();
+
+      return message;
+    }).then(async (message) => {
+      // Notifikasi ke exhibitor LAIN di room ini (kasus E2E - lawan bicara
+      // exhibitor company lain, punya exhibitor_id dari guestsId baris EX
+      // mereka). V2E/E2V (lawan bicara visitor) TIDAK ditangani di sini -
+      // notifikasi visitor itu domain apivisitor/PushNotificationsService,
+      // di luar scope exhibitor_notification.
+      const otherExMembers = await this.chatMemberRepo.find({
+        where: { eventsId: user.eventsId, chatId, usertypeId: 'EX' },
+      });
+      const recipients = otherExMembers.filter(
+        (m) => m.companyId == null || m.companyId !== user.companyId,
+      );
+      await Promise.all(
+        recipients.map((r) =>
+          this.notificationRepo.save(
+            this.notificationRepo.create({
+              eventsId: user.eventsId,
+              exhibitorId: r.guestsId,
+              type: 'CHAT_MESSAGE',
+              title: user.fullname,
+              body: text.length > 200 ? text.slice(0, 200) + '…' : text,
+              data: { chatId },
+              isRead: false,
+              createdAt: new Date(),
+            }),
+          ),
+        ),
+      );
 
       // TODO: push notification (FCM) - sengaja belum diimplementasi,
       // Chat dibangun dulu tanpa notifikasi push (keputusan Sept 2026).
