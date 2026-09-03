@@ -26,12 +26,20 @@ const TYPING_AUTO_CLEAR_MS = 5000;
  * (chat:join, chat:send, chat:message, chat:typing) supaya konsisten
  * kalau ada client yang perlu handle kedua sisi.
  *
- * KETERBATASAN PENTING: apiexhibitor & apivisitor itu PROSES NODE.JS
+ * KETERBATASAN SAAT INI: apiexhibitor & apivisitor proses Node.js
  * TERPISAH (port beda, server Socket.IO independen masing-masing).
  * Room Socket.IO itu in-memory PER SERVER - jadi kalau visitor kirim
  * pesan lewat apivisitor, broadcast real-time-nya CUMA sampai ke socket
  * yang connect ke apivisitor, TIDAK otomatis sampai ke socket yang
  * connect ke apiexhibitor (dan sebaliknya).
+ *
+ * RENCANA FASE SELANJUTNYA (dikonfirmasi Sept 2026): infrastruktur Redis
+ * SUDAH ADA di stack ini (dipakai untuk keperluan lain) - jadi pasang
+ * @socket.io/redis-adapter di KEDUA app (apivisitor & apiexhibitor),
+ * connect ke Redis instance yang sama, supaya broadcast lintas server
+ * beneran real-time. Belum dikerjakan sekarang - staff exhibitor yang
+ * connect ke apiexhibitor tetap dapat update instan sesama mereka;
+ * pesan dari/ke visitor sementara masih via polling REST.
  *
  * Yang TETAP jalan real-time: sesama staff exhibitor yang connect ke
  * apiexhibitor (kalau ada 2 staff company yang sama online bareng).
@@ -39,7 +47,7 @@ const TYPING_AUTO_CLEAR_MS = 5000;
  * dari visitor ke exhibitor, atau exhibitor ke visitor, gak ada
  * broadcast instan lintas app - client exhibitor perlu polling REST
  * (GET /chat/rooms/:chatId/messages) untuk lihat pesan baru dari visitor
- * sampai infra Redis adapter (shared pub/sub antar 2 server) dipasang.
+ * sampai Redis adapter di atas dipasang.
  */
 @WebSocketGateway({ namespace: 'chat', cors: { origin: '*' } })
 export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
