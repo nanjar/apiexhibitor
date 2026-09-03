@@ -13,10 +13,10 @@ import { ExhibitorCompany } from '../exhibitors/entities/exhibitor-company.entit
 import { ExhcompanySpace } from '../venue/entities/exhcompany-space.entity';
 import { VenueSpace } from '../venue/entities/venue-space.entity';
 import { LoginDto } from './dto/login.dto';
-import { SelectBoothDto } from './dto/select-booth.dto';
+import { SelectCompanyBoothDto } from './dto/select-company-booth.dto';
 
 /** Token identitas SEMENTARA hasil /auth/login - BELUM bisa dipakai akses
- * endpoint manapun selain /auth/select-booth. Beda dari JwtPayload biasa:
+ * endpoint manapun selain /auth/select-company-booth. Beda dari JwtPayload biasa:
  * tidak ada companyId/venueId/spaceId karena itu semua baru ditentukan
  * SETELAH booth dipilih. */
 export interface IdentityTokenPayload {
@@ -105,7 +105,7 @@ export class AuthService {
       fullname: contact.fullname,
     };
     // Identity token umurnya pendek (5 menit) - cuma dipakai buat jembatan
-    // ke /auth/select-booth, bukan token sesi.
+    // ke /auth/select-company-booth, bukan token sesi.
     const identityToken = await this.jwtService.signAsync(identityPayload, {
       secret: this.configService.get<string>('JWT_ACCESS_SECRET'),
       expiresIn: '5m',
@@ -125,7 +125,7 @@ export class AuthService {
   // Langkah 2/2: tukar identityToken + (companyId, venueId, spaceId)
   // pilihan -> access/refresh token penuh. Home dashboard nantinya
   // representasi untuk SATU booth spesifik ini, bukan company secara umum.
-  async selectBooth(dto: SelectBoothDto) {
+  async selectCompanyBooth(dto: SelectCompanyBoothDto) {
     let identity: IdentityTokenPayload;
     try {
       identity = await this.jwtService.verifyAsync<IdentityTokenPayload>(dto.identityToken, {

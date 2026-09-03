@@ -3,7 +3,7 @@ import { Throttle } from '@nestjs/throttler';
 import { ApiTags } from '@nestjs/swagger';
 import { AuthService } from './auth.service';
 import { LoginDto } from './dto/login.dto';
-import { SelectBoothDto } from './dto/select-booth.dto';
+import { SelectCompanyBoothDto } from './dto/select-company-booth.dto';
 
 @ApiTags('Auth')
 @Controller('auth')
@@ -22,10 +22,10 @@ export class AuthController {
 
   // Langkah 2/2: tukar identityToken + companyId pilihan -> access/refresh
   // token penuh.
-  @Post('select-booth')
+  @Post('select-company-booth')
   @HttpCode(HttpStatus.OK)
-  selectBooth(@Body() dto: SelectBoothDto) {
-    return this.authService.selectBooth(dto);
+  selectCompanyBooth(@Body() dto: SelectCompanyBoothDto) {
+    return this.authService.selectCompanyBooth(dto);
   }
 
   @Post('refresh')

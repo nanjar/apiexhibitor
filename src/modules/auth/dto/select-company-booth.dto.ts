@@ -7,7 +7,7 @@ import { IsInt, IsNotEmpty, IsString } from 'class-validator';
  * companyId+venueId+spaceId itu yang menentukan sesi ini ngelola booth
  * yang mana.
  */
-export class SelectBoothDto {
+export class SelectCompanyBoothDto {
   @ApiProperty({ description: 'Identity token dari hasil POST /auth/login' })
   @IsString()
   @IsNotEmpty()

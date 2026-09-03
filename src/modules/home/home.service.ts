@@ -13,7 +13,7 @@ import { CurrentExhibitor } from '../../common/decorators/current-exhibitor.deco
  * Home = representasi untuk SATU booth spesifik (company + venue + space),
  * bukan company secara umum - keputusan Sept 2026 setelah ketahuan satu
  * company bisa punya beberapa booth di lapangan. companyId/venueId/spaceId
- * semuanya sudah fixed di JWT hasil /auth/select-booth, jadi di sini
+ * semuanya sudah fixed di JWT hasil /auth/select-company-booth, jadi di sini
  * tinggal dipakai langsung, tidak perlu re-resolve daftar lokasi lagi.
  */
 @Injectable()
