@@ -10,14 +10,15 @@ import { ExhibitorMemberAction } from '../exhibitors/entities/exhibitor-member-a
 import { ExhibitorDeviceToken } from '../exhibitors/entities/exhibitor-device-token.entity';
 import { ExhibitorHaveCompany } from '../exhibitors/entities/exhibitor-have-company.entity';
 import { ExhibitorCompany } from '../exhibitors/entities/exhibitor-company.entity';
+import { ExhcompanySpace } from '../venue/entities/exhcompany-space.entity';
+import { VenueSpace } from '../venue/entities/venue-space.entity';
 import { LoginDto } from './dto/login.dto';
-import { SelectCompanyDto } from './dto/select-company.dto';
+import { SelectBoothDto } from './dto/select-booth.dto';
 
 /** Token identitas SEMENTARA hasil /auth/login - BELUM bisa dipakai akses
- * endpoint manapun selain /auth/select-company. Beda dari JwtPayload biasa:
- * tidak ada companyId/isOwner/canScan/canChat karena itu semua baru
- * ditentukan SETELAH company dipilih (satu exhibitor bisa beda permission
- * di company berbeda kalau nanti membership per-company diterapkan). */
+ * endpoint manapun selain /auth/select-booth. Beda dari JwtPayload biasa:
+ * tidak ada companyId/venueId/spaceId karena itu semua baru ditentukan
+ * SETELAH booth dipilih. */
 export interface IdentityTokenPayload {
   stage: 'IDENTITY';
   sub: number; // exhibitor_contact.id
@@ -30,6 +31,8 @@ export interface JwtPayload {
   sub: number;
   eventsId: number;
   companyId: number;
+  venueId: number;
+  spaceId: number;
   phone: string;
   fullname: string;
   isOwner: boolean;
@@ -54,14 +57,18 @@ export class AuthService {
     private readonly haveCompanyRepo: Repository<ExhibitorHaveCompany>,
     @InjectRepository(ExhibitorCompany)
     private readonly companyRepo: Repository<ExhibitorCompany>,
+    @InjectRepository(ExhcompanySpace)
+    private readonly companySpaceRepo: Repository<ExhcompanySpace>,
+    @InjectRepository(VenueSpace)
+    private readonly venueSpaceRepo: Repository<VenueSpace>,
     private readonly jwtService: JwtService,
     private readonly configService: ConfigService,
   ) {}
 
   // Screen: Login exhibitor app — event key (6-digit) + nomor HP.
   // TANPA OTP. Langkah 1 dari 2: identitas tervalidasi, tapi belum dapat
-  // akses penuh - exhibitor harus pilih company dulu (satu exhibitor bisa
-  // mewakili beberapa company, lihat exhibitor_have_company).
+  // akses penuh - exhibitor harus pilih BOOTH dulu (company+venue+space -
+  // satu company bisa punya beberapa booth di lapangan).
   async login(dto: LoginDto) {
     const event = await this.eventRepo.findOne({ where: { evToken: dto.eventKey } });
     if (!event) {
@@ -88,7 +95,7 @@ export class AuthService {
       await this.recordDeviceToken(event.id, contact.id, dto.deviceId, dto.platform);
     }
 
-    const companies = await this.getCompaniesForExhibitor(event.id, contact.id);
+    const booths = await this.getBoothsForExhibitor(event.id, contact.id);
 
     const identityPayload: IdentityTokenPayload = {
       stage: 'IDENTITY',
@@ -98,7 +105,7 @@ export class AuthService {
       fullname: contact.fullname,
     };
     // Identity token umurnya pendek (5 menit) - cuma dipakai buat jembatan
-    // ke /auth/select-company, bukan token sesi.
+    // ke /auth/select-booth, bukan token sesi.
     const identityToken = await this.jwtService.signAsync(identityPayload, {
       secret: this.configService.get<string>('JWT_ACCESS_SECRET'),
       expiresIn: '5m',
@@ -111,14 +118,14 @@ export class AuthService {
         phone: contact.phone,
         isOwner: member.isOwner === 'Y',
       },
-      companies,
+      booths,
     };
   }
 
-  // Screen: Pilih company (kalau exhibitor mewakili >1 company). Langkah
-  // 2 dari 2: tukar identityToken + companyId pilihan -> access/refresh
-  // token penuh, siap dipakai ke semua endpoint lain.
-  async selectCompany(dto: SelectCompanyDto) {
+  // Langkah 2/2: tukar identityToken + (companyId, venueId, spaceId)
+  // pilihan -> access/refresh token penuh. Home dashboard nantinya
+  // representasi untuk SATU booth spesifik ini, bukan company secara umum.
+  async selectBooth(dto: SelectBoothDto) {
     let identity: IdentityTokenPayload;
     try {
       identity = await this.jwtService.verifyAsync<IdentityTokenPayload>(dto.identityToken, {
@@ -131,15 +138,27 @@ export class AuthService {
       throw new UnauthorizedException('Token tidak valid untuk langkah ini');
     }
 
-    const allowed = await this.haveCompanyRepo.findOne({
+    const allowedCompany = await this.haveCompanyRepo.findOne({
       where: { eventsId: identity.eventsId, exhibitorId: identity.sub, companyId: dto.companyId },
     });
-    if (!allowed) {
+    if (!allowedCompany) {
       throw new ForbiddenException('Kamu tidak terhubung ke company ini');
     }
 
-    // Re-check status (bukan cuma percaya identity token) - status bisa
-    // saja berubah di antara langkah login dan select-company.
+    // Validasi kombinasi company+venue+space itu beneran booth yang
+    // terdaftar (bukan cuma company-nya benar, boothnya juga harus sah).
+    const validBooth = await this.companySpaceRepo.findOne({
+      where: {
+        eventsId: identity.eventsId,
+        companyId: dto.companyId,
+        venueId: dto.venueId,
+        spaceId: dto.spaceId,
+      },
+    });
+    if (!validBooth) {
+      throw new ForbiddenException('Kombinasi company/booth tidak valid');
+    }
+
     const contact = await this.contactRepo.findOne({
       where: { eventsId: identity.eventsId, id: identity.sub },
     });
@@ -153,7 +172,14 @@ export class AuthService {
       throw new ForbiddenException('Akses kamu sudah dicabut');
     }
 
-    return this.buildTokenResponse(identity.eventsId, dto.companyId, contact, member);
+    return this.buildTokenResponse(
+      identity.eventsId,
+      dto.companyId,
+      dto.venueId,
+      dto.spaceId,
+      contact,
+      member,
+    );
   }
 
   async refresh(refreshToken: string) {
@@ -178,6 +204,17 @@ export class AuthService {
     if (!allowed) {
       throw new ForbiddenException('Kamu tidak lagi terhubung ke company ini');
     }
+    const validBooth = await this.companySpaceRepo.findOne({
+      where: {
+        eventsId: payload.eventsId,
+        companyId: payload.companyId,
+        venueId: payload.venueId,
+        spaceId: payload.spaceId,
+      },
+    });
+    if (!validBooth) {
+      throw new ForbiddenException('Booth ini sudah tidak terdaftar untuk company kamu');
+    }
     const member = await this.memberRepo.findOne({
       where: { eventsId: payload.eventsId, exhibitorId: contact.id },
     });
@@ -185,25 +222,57 @@ export class AuthService {
       throw new ForbiddenException('Akses kamu untuk booth ini sudah dicabut');
     }
 
-    return this.buildTokenResponse(payload.eventsId, payload.companyId, contact, member);
+    return this.buildTokenResponse(
+      payload.eventsId,
+      payload.companyId,
+      payload.venueId,
+      payload.spaceId,
+      contact,
+      member,
+    );
   }
 
-  private async getCompaniesForExhibitor(eventsId: number, exhibitorId: number) {
+  /**
+   * Satu exhibitor bisa punya beberapa company (exhibitor_have_company),
+   * dan satu company bisa punya beberapa booth (exhcompany_space) - jadi
+   * daftar yang dikembalikan itu per KOMBINASI company+venue+space, bukan
+   * per company saja.
+   */
+  private async getBoothsForExhibitor(eventsId: number, exhibitorId: number) {
     const links = await this.haveCompanyRepo.find({ where: { eventsId, exhibitorId } });
     if (links.length === 0) return [];
 
     const companyIds = links.map((l) => l.companyId);
-    const companies = await this.companyRepo
-      .createQueryBuilder('c')
-      .where('c.eventsId = :eventsId', { eventsId })
-      .andWhere('c.id IN (:...companyIds)', { companyIds })
-      .getMany();
+    const [companies, companySpaces] = await Promise.all([
+      this.companyRepo
+        .createQueryBuilder('c')
+        .where('c.eventsId = :eventsId', { eventsId })
+        .andWhere('c.id IN (:...companyIds)', { companyIds })
+        .getMany(),
+      this.companySpaceRepo
+        .createQueryBuilder('cs')
+        .where('cs.eventsId = :eventsId', { eventsId })
+        .andWhere('cs.companyId IN (:...companyIds)', { companyIds })
+        .getMany(),
+    ]);
 
-    return companies.map((c) => ({
-      companyId: c.id,
-      companyName: c.companyName,
-      logo: c.logo,
-    }));
+    if (companySpaces.length === 0) return [];
+
+    const venueSpaces = await this.venueSpaceRepo.find({ where: { eventsId } });
+
+    return companySpaces.map((cs) => {
+      const company = companies.find((c) => c.id === cs.companyId);
+      const space = venueSpaces.find((vs) => vs.id === cs.spaceId && vs.venueId === cs.venueId);
+      return {
+        companyId: cs.companyId,
+        companyName: company?.companyName ?? null,
+        logo: company?.logo ?? null,
+        venueId: cs.venueId,
+        spaceId: cs.spaceId,
+        spaceName: space?.spaceName ?? null,
+        spaceDetails: space?.spaceDetails ?? null,
+      };
+    });
   }
 
   private async findContactByPhone(
@@ -330,6 +399,8 @@ export class AuthService {
   private async buildTokenResponse(
     eventsId: number,
     companyId: number,
+    venueId: number,
+    spaceId: number,
     contact: ExhibitorContact,
     member: ExhibitorMemberStatus,
   ) {
@@ -337,6 +408,8 @@ export class AuthService {
       sub: contact.id,
       eventsId,
       companyId,
+      venueId,
+      spaceId,
       phone: contact.phone,
       fullname: contact.fullname,
       isOwner: member.isOwner === 'Y',
@@ -362,6 +435,8 @@ export class AuthService {
         id: contact.id,
         eventsId,
         companyId,
+        venueId,
+        spaceId,
         fullname: contact.fullname,
         phone: contact.phone,
         jobTitle: contact.jobTitle,

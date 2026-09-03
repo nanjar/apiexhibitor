@@ -4,6 +4,8 @@ export interface CurrentExhibitor {
   exhibitorId: number;
   eventsId: number;
   companyId: number;
+  venueId: number;
+  spaceId: number;
   fullname: string;
   phone: string;
   isOwner: boolean;

@@ -3,7 +3,7 @@ import { Throttle } from '@nestjs/throttler';
 import { ApiTags } from '@nestjs/swagger';
 import { AuthService } from './auth.service';
 import { LoginDto } from './dto/login.dto';
-import { SelectCompanyDto } from './dto/select-company.dto';
+import { SelectBoothDto } from './dto/select-booth.dto';
 
 @ApiTags('Auth')
 @Controller('auth')
@@ -11,7 +11,8 @@ export class AuthController {
   constructor(private readonly authService: AuthService) {}
 
   // Langkah 1/2: event key + nomor HP, TANPA OTP. Balikin identityToken +
-  // daftar company yang bisa dipilih (satu exhibitor bisa pegang > 1 company).
+  // daftar BOOTH yang bisa dipilih (kombinasi company+venue+space - satu
+  // company bisa punya beberapa booth).
   @Post('login')
   @HttpCode(HttpStatus.OK)
   @Throttle({ default: { limit: 10, ttl: 60_000 } })
@@ -21,10 +22,10 @@ export class AuthController {
 
   // Langkah 2/2: tukar identityToken + companyId pilihan -> access/refresh
   // token penuh.
-  @Post('select-company')
+  @Post('select-booth')
   @HttpCode(HttpStatus.OK)
-  selectCompany(@Body() dto: SelectCompanyDto) {
-    return this.authService.selectCompany(dto);
+  selectBooth(@Body() dto: SelectBoothDto) {
+    return this.authService.selectBooth(dto);
   }
 
   @Post('refresh')

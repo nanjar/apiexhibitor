@@ -20,6 +20,8 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
       exhibitorId: payload.sub,
       eventsId: payload.eventsId,
       companyId: payload.companyId,
+      venueId: payload.venueId,
+      spaceId: payload.spaceId,
       fullname: payload.fullname,
       phone: payload.phone,
       isOwner: payload.isOwner,

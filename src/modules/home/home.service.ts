@@ -9,6 +9,13 @@ import { EventsMeetingV2 } from '../meetings/entities/events-meeting-v2.entity';
 import { MeetingMemberV2 } from '../meetings/entities/meeting-member-v2.entity';
 import { CurrentExhibitor } from '../../common/decorators/current-exhibitor.decorator';
 
+/**
+ * Home = representasi untuk SATU booth spesifik (company + venue + space),
+ * bukan company secara umum - keputusan Sept 2026 setelah ketahuan satu
+ * company bisa punya beberapa booth di lapangan. companyId/venueId/spaceId
+ * semuanya sudah fixed di JWT hasil /auth/select-booth, jadi di sini
+ * tinggal dipakai langsung, tidak perlu re-resolve daftar lokasi lagi.
+ */
 @Injectable()
 export class HomeService {
   constructor(
@@ -26,9 +33,9 @@ export class HomeService {
 
   async getHome(user: CurrentExhibitor) {
     const [booth, leadsCount, pendingMeetingsCount] = await Promise.all([
-      this.getBoothProfile(user.eventsId, user.companyId),
-      this.getLeadsCount(user.eventsId, user.companyId),
-      this.getPendingMeetingsCount(user.eventsId, user.companyId),
+      this.getBoothProfile(user),
+      this.getLeadsCount(user),
+      this.getPendingMeetingsCount(user),
     ]);
 
     return {
@@ -51,65 +58,54 @@ export class HomeService {
     };
   }
 
-  private async getBoothProfile(eventsId: number, companyId: number | null) {
-    if (!companyId) {
-      return null;
-    }
+  private async getBoothProfile(user: CurrentExhibitor) {
+    const [company, companySpace] = await Promise.all([
+      this.companyRepo.findOne({ where: { eventsId: user.eventsId, id: user.companyId } }),
+      this.companySpaceRepo.findOne({
+        where: {
+          eventsId: user.eventsId,
+          companyId: user.companyId,
+          venueId: user.venueId,
+          spaceId: user.spaceId,
+        },
+      }),
+    ]);
+    if (!company || !companySpace) return null;
 
-    const company = await this.companyRepo.findOne({
-      where: { eventsId, id: companyId },
-    });
-    if (!company) return null;
-
-    // Satu company bisa punya beberapa space (lihat exhcompany_space) -
-    // ambil semua, gabungkan dengan detail nama/lokasi dari venue_space.
-    const companySpaces = await this.companySpaceRepo.find({
-      where: { eventsId, companyId },
-    });
-
-    const spaceIds = [...new Set(companySpaces.map((cs) => cs.spaceId))];
-    const venueSpaces = spaceIds.length
-      ? await this.venueSpaceRepo.find({ where: { eventsId } })
-      : [];
-
-    const locations = companySpaces.map((cs) => {
-      const space = venueSpaces.find(
-        (vs) => vs.id === cs.spaceId && vs.venueId === cs.venueId,
-      );
-      return {
-        venueId: cs.venueId,
-        spaceId: cs.spaceId,
-        spaceName: space?.spaceName ?? null,
-        spaceDetails: space?.spaceDetails ?? null,
-      };
+    const space = await this.venueSpaceRepo.findOne({
+      where: { eventsId: user.eventsId, id: user.spaceId, venueId: user.venueId },
     });
 
     return {
       companyId: company.id,
       companyName: company.companyName,
       logo: company.logo,
-      locations,
+      venueId: user.venueId,
+      spaceId: user.spaceId,
+      spaceName: space?.spaceName ?? null,
+      spaceDetails: space?.spaceDetails ?? null,
     };
   }
 
-  private async getLeadsCount(eventsId: number, companyId: number | null): Promise<number> {
-    if (!companyId) return 0;
-    // Distinct guests_id - satu visitor bisa ke-scan lebih dari sekali
-    // (misal scan ulang pas tanya-tanya lagi), jangan double count sebagai lead.
+  private async getLeadsCount(user: CurrentExhibitor): Promise<number> {
+    // Scope ke booth spesifik (venue+space), bukan seluruh company - kalau
+    // company punya beberapa booth, lead masing-masing booth dihitung
+    // terpisah, konsisten dengan "Home representasi untuk booth tertentu".
     const result = await this.checkinRepo
       .createQueryBuilder('c')
       .select('COUNT(DISTINCT c.guestsId)', 'count')
-      .where('c.eventsId = :eventsId', { eventsId })
-      .andWhere('c.companyId = :companyId', { companyId })
+      .where('c.eventsId = :eventsId', { eventsId: user.eventsId })
+      .andWhere('c.companyId = :companyId', { companyId: user.companyId })
+      .andWhere('c.venueId = :venueId', { venueId: user.venueId })
+      .andWhere('c.spaceId = :spaceId', { spaceId: user.spaceId })
       .getRawOne<{ count: string }>();
     return parseInt(result?.count ?? '0', 10);
   }
 
-  private async getPendingMeetingsCount(
-    eventsId: number,
-    companyId: number | null,
-  ): Promise<number> {
-    if (!companyId) return 0;
+  private async getPendingMeetingsCount(user: CurrentExhibitor): Promise<number> {
+    // CATATAN: meeting_member_v2 cuma punya company_id, TIDAK ada
+    // venue_id/space_id - jadi meeting pending scope-nya masih per
+    // company, belum bisa dipersempit ke booth spesifik dari sisi data.
     const result = await this.meetingMemberRepo
       .createQueryBuilder('mm')
       .innerJoin(
@@ -117,8 +113,8 @@ export class HomeService {
         'm',
         'm.eventsId = mm.eventsId AND m.id = mm.meetingId',
       )
-      .where('mm.eventsId = :eventsId', { eventsId })
-      .andWhere('mm.companyId = :companyId', { companyId })
+      .where('mm.eventsId = :eventsId', { eventsId: user.eventsId })
+      .andWhere('mm.companyId = :companyId', { companyId: user.companyId })
       .andWhere('mm.usertypeId = :usertypeId', { usertypeId: 'EX' })
       .andWhere('m.approvalStatus = :pending', { pending: 'PE' })
       .getCount();
