@@ -5,6 +5,7 @@ import * as ExcelJS from 'exceljs';
 import { BoothService } from '../booth/booth.service';
 import { MeetingsService } from '../meetings/meetings.service';
 import { LinkClickLog } from './entities/link-click-log.entity';
+import { ExhibitorProduct } from './entities/exhibitor-product.entity';
 import { CurrentExhibitor } from '../../common/decorators/current-exhibitor.decorator';
 
 /**
@@ -21,6 +22,8 @@ export class ReportsService {
     private readonly meetingsService: MeetingsService,
     @InjectRepository(LinkClickLog)
     private readonly linkClickLogRepo: Repository<LinkClickLog>,
+    @InjectRepository(ExhibitorProduct)
+    private readonly productRepo: Repository<ExhibitorProduct>,
   ) {}
 
   async getSummary(user: CurrentExhibitor, from?: string, to?: string) {
@@ -82,7 +85,11 @@ export class ReportsService {
         website: clicks.filter((c) => c.linkType === 'WEBSITE').length,
         brochure: clicks.filter((c) => c.linkType === 'BROCHURE').length,
         promo: clicks.filter((c) => c.linkType === 'PROMO').length,
+        productUrl: clicks.filter((c) => c.linkType === 'PRODUCT_URL').length,
       },
+      // Ini yang sebelumnya kelewat: byType doang gak jawab "produk yang
+      // mana yang diklik" - breakdown per productId + linkType di sini.
+      byProduct: await this.buildClickByProduct(user, clicks),
     };
 
     return {
@@ -127,6 +134,43 @@ export class ReportsService {
 
     const buffer = await workbook.xlsx.writeBuffer();
     return Buffer.from(buffer);
+  }
+
+  private async buildClickByProduct(user: CurrentExhibitor, clicks: LinkClickLog[]) {
+    const productIds = [...new Set(clicks.map((c) => c.productId).filter((id): id is number => id != null))];
+    const products = productIds.length
+      ? await this.productRepo
+          .createQueryBuilder('p')
+          .where('p.eventsId = :eventsId', { eventsId: user.eventsId })
+          .andWhere('p.id IN (:...ids)', { ids: productIds })
+          .getMany()
+      : [];
+
+    const grouped = new Map<number | null, LinkClickLog[]>();
+    for (const c of clicks) {
+      const key = c.productId;
+      if (!grouped.has(key)) grouped.set(key, []);
+      grouped.get(key)!.push(c);
+    }
+
+    return Array.from(grouped.entries()).map(([productId, items]) => {
+      const product = productId != null ? products.find((p) => p.id === productId) : null;
+      return {
+        productId,
+        productName: product?.productName ?? (productId == null ? 'Tanpa produk' : `Produk #${productId}`),
+        total: items.length,
+        byType: {
+          instagram: items.filter((c) => c.linkType === 'INSTAGRAM').length,
+          facebook: items.filter((c) => c.linkType === 'FACEBOOK').length,
+          tiktok: items.filter((c) => c.linkType === 'TIKTOK').length,
+          twitter: items.filter((c) => c.linkType === 'TWITTER').length,
+          website: items.filter((c) => c.linkType === 'WEBSITE').length,
+          brochure: items.filter((c) => c.linkType === 'BROCHURE').length,
+          promo: items.filter((c) => c.linkType === 'PROMO').length,
+          productUrl: items.filter((c) => c.linkType === 'PRODUCT_URL').length,
+        },
+      };
+    }).sort((a, b) => b.total - a.total);
   }
 
   private resolveRange(from?: string, to?: string): { start: Date; end: Date } {

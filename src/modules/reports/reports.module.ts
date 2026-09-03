@@ -4,12 +4,13 @@ import { PassportModule } from '@nestjs/passport';
 import { BoothModule } from '../booth/booth.module';
 import { MeetingsModule } from '../meetings/meetings.module';
 import { LinkClickLog } from './entities/link-click-log.entity';
+import { ExhibitorProduct } from './entities/exhibitor-product.entity';
 import { ReportsController } from './reports.controller';
 import { ReportsService } from './reports.service';
 
 @Module({
   imports: [
-    TypeOrmModule.forFeature([LinkClickLog]),
+    TypeOrmModule.forFeature([LinkClickLog, ExhibitorProduct]),
     BoothModule,
     MeetingsModule,
     PassportModule,
