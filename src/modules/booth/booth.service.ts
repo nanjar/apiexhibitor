@@ -100,7 +100,35 @@ export class BoothService {
       }),
     ]);
 
-    const pendingOnly = pending.filter((p) => p.pushedAt === null);
+    // FIX (Sept 2026): sebelumnya pakai pushedAt===null untuk nentuin
+    // "pending" - ternyata ada CELAH: begitu push-job selesai (pushedAt
+    // terisi) tapi pull-sync BELUM jalan lagi, row itu jadi tidak masuk
+    // kategori manapun (bukan pending karena pushedAt sudah ada, bukan
+    // confirmed karena belum ada di mirror) - "hilang sementara" dari UI.
+    //
+    // Fix: staging row dianggap "masih pending" kalau BELUM ADA row
+    // confirmed yang cocok (bukan berdasar pushedAt). Dicocokkan lewat
+    // createdAt PERSIS SAMA (push-job selalu insert created_at staging
+    // apa adanya ke MySQL) + identitas lain - key yang reliable karena
+    // timestamp staging tidak pernah diubah push-job.
+    const confirmedKeys = new Set(
+      confirmed.map((c) =>
+        this.correlationKey(c.eventsId, c.companyId, c.venueId, c.spaceId, c.exhibitorId, c.createdAt),
+      ),
+    );
+    const pendingOnly = pending.filter(
+      (p) =>
+        !confirmedKeys.has(
+          this.correlationKey(
+            p.eventsId,
+            p.companyId,
+            p.venueId,
+            p.spaceId,
+            p.actorExhibitorId,
+            p.createdAt,
+          ),
+        ),
+    );
 
     let items = [
       ...confirmed.map((c) => this.toLeadItem(c, false)),
@@ -203,6 +231,21 @@ export class BoothService {
       }
     }
     return map;
+  }
+
+  private correlationKey(
+    eventsId: number,
+    companyId: number,
+    venueId: number,
+    spaceId: number,
+    exhibitorId: number,
+    createdAt: Date,
+  ): string {
+    // Truncate ke presisi DETIK - MySQL `datetime` tidak simpan milidetik,
+    // jadi row yang sudah pulang-pergi lewat MySQL bakal beda milidetik-nya
+    // dari staging asli kalau dibandingkan penuh.
+    const seconds = Math.floor(new Date(createdAt).getTime() / 1000);
+    return `${eventsId}|${companyId}|${venueId}|${spaceId}|${exhibitorId}|${seconds}`;
   }
 
   private jakartaStartOfDay(): Date {
