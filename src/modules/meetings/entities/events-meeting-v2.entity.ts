@@ -28,4 +28,16 @@ export class EventsMeetingV2 {
 
   @Column({ name: 'com_direction', type: 'varchar', length: 3, nullable: true })
   comDirection: string;
+
+  // Fix Sept 2026: company_id kolom BARU (booking baru selalu isi ini).
+  // NULL untuk meeting lama sebelum fix ini ada - fallback ke
+  // meeting_member_v2 untuk kasus itu.
+  @Column({ name: 'company_id', type: 'int', nullable: true })
+  companyId: number | null;
+
+  @Column({ name: 'initiated_by', type: 'varchar', length: 2, nullable: true })
+  initiatedBy: 'VI' | 'EX' | null;
+
+  @Column({ name: 'initiator_id', type: 'int', nullable: true })
+  initiatorId: number | null;
 }
