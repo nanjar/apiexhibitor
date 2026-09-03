@@ -32,6 +32,7 @@ export class HomeService {
     ]);
 
     return {
+      eventsId: user.eventsId,
       exhibitor: {
         fullname: user.fullname,
         isOwner: user.isOwner,
