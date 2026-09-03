@@ -1,7 +1,7 @@
 import { Column, Entity, PrimaryGeneratedColumn } from 'typeorm';
 
-/** Staging native - exhibitor app insert lead baru ke sini, push-job yang
- * proses ke MySQL (exhibitor_lead_sync + checkin_booth kalau relevan). */
+/** Staging native. action='CREATE' bikin lead baru, action='UPDATE_NOTES'
+ * edit notes lead yang sudah confirmed (leadId = id MySQL asli). */
 @Entity('exhibitor_app_lead_action')
 export class ExhibitorLeadAction {
   @PrimaryGeneratedColumn()
@@ -25,8 +25,8 @@ export class ExhibitorLeadAction {
   @Column({ name: 'guests_id', type: 'int', nullable: true })
   guestsId: number | null;
 
-  @Column({ name: 'source', type: 'varchar', length: 15 })
-  source: 'SCAN' | 'EVENT_GUEST' | 'MANUAL';
+  @Column({ name: 'source', type: 'varchar', length: 15, nullable: true })
+  source: 'SCAN' | 'EVENT_GUEST' | 'MANUAL' | null;
 
   @Column({ name: 'manual_fullname', type: 'varchar', length: 100, nullable: true })
   manualFullname: string | null;
@@ -39,6 +39,12 @@ export class ExhibitorLeadAction {
 
   @Column({ name: 'notes', type: 'text', nullable: true })
   notes: string | null;
+
+  @Column({ name: 'action', type: 'varchar', length: 15, default: 'CREATE' })
+  action: 'CREATE' | 'UPDATE_NOTES';
+
+  @Column({ name: 'lead_id', type: 'int', nullable: true })
+  leadId: number | null;
 
   @Column({ name: 'created_at', type: 'timestamptz' })
   createdAt: Date;

@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { ExhibitorLeadSync } from './entities/exhibitor-lead-sync.entity';
@@ -10,6 +10,7 @@ import { ExhibitorHaveCompany } from '../exhibitors/entities/exhibitor-have-comp
 import { CurrentExhibitor } from '../../common/decorators/current-exhibitor.decorator';
 import { ScanLeadDto } from './dto/scan-lead.dto';
 import { ManualLeadDto } from './dto/manual-lead.dto';
+import { UpdateLeadNotesDto } from './dto/update-lead-notes.dto';
 
 const SCORE_PRIORITY: Record<string, number> = { Hot: 3, Warm: 2, Cold: 1 };
 
@@ -24,6 +25,11 @@ const SCORE_PRIORITY: Record<string, number> = { Hot: 3, Warm: 2, Cold: 1 };
  * Temperature = meeting_score dari meeting APPROVED dengan skor TERTINGGI
  * (Hot > Warm > Cold) antara visitor itu & company - dihitung dari
  * meeting_member_v2 + events_meeting_v2 (bukan field tersendiri).
+ *
+ * Alur scan (Sept 2026): input = token QR (guests_ticket.token), BUKAN
+ * guestsId langsung - resolve dulu ke detail visitor, ditampilkan ke
+ * exhibitor. Notes TIDAK diisi saat scan - diisi belakangan lewat
+ * updateNotes() setelah lead confirmed di mirror.
  */
 @Injectable()
 export class BoothService {
@@ -41,19 +47,41 @@ export class BoothService {
   ) {}
 
   async scan(user: CurrentExhibitor, dto: ScanLeadDto) {
+    const guest = await this.guestsRepo.findOne({
+      where: { eventsId: user.eventsId, token: dto.token },
+    });
+    if (!guest) {
+      throw new NotFoundException('QR code tidak valid atau visitor tidak ditemukan untuk event ini');
+    }
+
     const action = this.leadActionRepo.create({
       eventsId: user.eventsId,
       companyId: user.companyId,
       venueId: user.venueId,
       spaceId: user.spaceId,
       actorExhibitorId: user.exhibitorId,
-      guestsId: dto.guestsId,
+      guestsId: guest.guestsId,
       source: dto.source,
-      notes: dto.notes ?? null,
+      action: 'CREATE',
       createdAt: new Date(),
     });
     await this.leadActionRepo.save(action);
-    return { pending: true, actionId: action.id, source: dto.source };
+
+    return {
+      pending: true,
+      actionId: action.id,
+      source: dto.source,
+      // Detail visitor - ditampilkan ke exhibitor setelah scan, sebelum
+      // dia lanjut isi notes (opsional, lewat endpoint terpisah).
+      visitor: {
+        guestsId: guest.guestsId,
+        fullname: guest.fullname,
+        email: guest.email,
+        phone: guest.phone,
+        companyName: guest.companyName,
+        guestTitle: guest.guestTitle,
+      },
+    };
   }
 
   async addManual(user: CurrentExhibitor, dto: ManualLeadDto) {
@@ -69,10 +97,55 @@ export class BoothService {
       manualPhone: dto.phone ?? null,
       manualCompany: dto.company ?? null,
       notes: dto.notes ?? null,
+      action: 'CREATE',
       createdAt: new Date(),
     });
     await this.leadActionRepo.save(action);
     return { pending: true, actionId: action.id, source: 'MANUAL' };
+  }
+
+  /**
+   * Update notes - CUMA untuk lead yang SUDAH confirmed (punya id MySQL
+   * asli dari exhibitor_lead_sync). Kalau lead masih pending (baru saja
+   * di-scan, belum sempat pull-sync balik), tolak dengan pesan jelas -
+   * jangan coba nebak-nebak row staging mana yang dimaksud.
+   */
+  async updateNotes(user: CurrentExhibitor, leadId: number, dto: UpdateLeadNotesDto) {
+    const lead = await this.leadSyncRepo.findOne({
+      where: {
+        id: leadId,
+        eventsId: user.eventsId,
+        companyId: user.companyId,
+        venueId: user.venueId,
+        spaceId: user.spaceId,
+      },
+    });
+    if (!lead) {
+      throw new NotFoundException(
+        'Lead tidak ditemukan - kalau baru saja di-scan, tunggu sebentar sampai statusnya bukan pending lagi',
+      );
+    }
+
+    const action = this.leadActionRepo.create({
+      eventsId: user.eventsId,
+      companyId: user.companyId,
+      venueId: user.venueId,
+      spaceId: user.spaceId,
+      actorExhibitorId: user.exhibitorId,
+      action: 'UPDATE_NOTES',
+      leadId,
+      notes: dto.notes,
+      createdAt: new Date(),
+    });
+    await this.leadActionRepo.save(action);
+
+    // Optimistic - tulis langsung ke mirror supaya UI langsung reflect.
+    // Aman: notes yang ditulis SAMA PERSIS dengan yang bakal ditulis
+    // push-job ke MySQL.
+    lead.notes = dto.notes;
+    await this.leadSyncRepo.save(lead);
+
+    return { leadId, notes: dto.notes };
   }
 
   async listLeads(
@@ -96,6 +169,7 @@ export class BoothService {
           companyId: user.companyId,
           venueId: user.venueId,
           spaceId: user.spaceId,
+          action: 'CREATE', // UPDATE_NOTES bukan lead baru, jangan ikut di-list
         },
       }),
     ]);

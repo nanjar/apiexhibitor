@@ -1,9 +1,10 @@
-import { Body, Controller, Get, Post, Query, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, Param, ParseIntPipe, Patch, Post, Query, UseGuards } from '@nestjs/common';
 import { AuthGuard } from '@nestjs/passport';
 import { ApiBearerAuth, ApiQuery, ApiTags } from '@nestjs/swagger';
 import { BoothService } from './booth.service';
 import { ScanLeadDto } from './dto/scan-lead.dto';
 import { ManualLeadDto } from './dto/manual-lead.dto';
+import { UpdateLeadNotesDto } from './dto/update-lead-notes.dto';
 import { CurrentUser, CurrentExhibitor } from '../../common/decorators/current-exhibitor.decorator';
 
 @ApiTags('My Booth')
@@ -24,8 +25,7 @@ export class BoothController {
     return this.boothService.listLeads(user, temperature, today === 'true');
   }
 
-  // Scan QR/badge visitor (source SCAN) atau tamu event tanpa scan
-  // (source EVENT_GUEST) - keduanya butuh guestsId valid.
+  // Scan QR visitor - input token, sistem resolve ke detail visitor.
   @Post('leads/scan')
   scan(@CurrentUser() user: CurrentExhibitor, @Body() dto: ScanLeadDto) {
     return this.boothService.scan(user, dto);
@@ -35,5 +35,15 @@ export class BoothController {
   @Post('leads/manual')
   addManual(@CurrentUser() user: CurrentExhibitor, @Body() dto: ManualLeadDto) {
     return this.boothService.addManual(user, dto);
+  }
+
+  // Isi/edit notes - cuma untuk lead yang sudah confirmed (punya id asli).
+  @Patch('leads/:leadId/notes')
+  updateNotes(
+    @CurrentUser() user: CurrentExhibitor,
+    @Param('leadId', ParseIntPipe) leadId: number,
+    @Body() dto: UpdateLeadNotesDto,
+  ) {
+    return this.boothService.updateNotes(user, leadId, dto);
   }
 }

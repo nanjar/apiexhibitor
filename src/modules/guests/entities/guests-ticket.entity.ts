@@ -15,4 +15,16 @@ export class GuestsTicket {
 
   @Column({ name: 'guest_title', type: 'varchar', length: 6, nullable: true })
   guestTitle: string;
+
+  @Column({ name: 'token', type: 'varchar', length: 255, nullable: true })
+  token: string | null;
+
+  @Column({ name: 'email', type: 'varchar', length: 200, nullable: true })
+  email: string | null;
+
+  @Column({ name: 'phone', type: 'varchar', length: 25, nullable: true })
+  phone: string | null;
+
+  @Column({ name: 'company_name', type: 'varchar', length: 200, nullable: true })
+  companyName: string | null;
 }
