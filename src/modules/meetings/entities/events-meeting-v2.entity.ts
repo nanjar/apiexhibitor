@@ -25,4 +25,7 @@ export class EventsMeetingV2 {
 
   @Column({ name: 'meeting_score', type: 'varchar', length: 50, nullable: true })
   meetingScore: string;
+
+  @Column({ name: 'com_direction', type: 'varchar', length: 3, nullable: true })
+  comDirection: string;
 }

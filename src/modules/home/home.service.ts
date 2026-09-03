@@ -5,25 +5,24 @@ import { ExhibitorCompany } from '../exhibitors/entities/exhibitor-company.entit
 import { ExhcompanySpace } from '../venue/entities/exhcompany-space.entity';
 import { VenueSpace } from '../venue/entities/venue-space.entity';
 import { CheckinBooth } from '../booth/entities/checkin-booth.entity';
-import { EventsMeetingV2 } from '../meetings/entities/events-meeting-v2.entity';
-import { MeetingMemberV2 } from '../meetings/entities/meeting-member-v2.entity';
-import { GuestsTicket } from '../guests/entities/guests-ticket.entity';
+import { MeetingsService } from '../meetings/meetings.service';
 import { CurrentExhibitor } from '../../common/decorators/current-exhibitor.decorator';
 
 /**
  * Home = representasi untuk SATU booth spesifik (company + venue + space).
- * companyId/venueId/spaceId semuanya sudah fixed di JWT hasil
- * /auth/select-company-booth.
+ *
+ * Meeting count & pendingActions SENGAJA delegasi ke MeetingsService,
+ * BUKAN query sendiri - supaya logic "meeting ini punya company siapa"
+ * (via exhibitor_have_company, BUKAN kolom meeting_member_v2.company_id
+ * yang tidak reliable) cuma ada di SATU tempat. Digabung dari 2 tab
+ * (visitor + exhibitor) karena Home representasi keseluruhan, bukan per-tab.
  *
  * Field yang SENGAJA belum diisi (per keputusan Sept 2026, nunggu
  * keputusan lanjutan):
  * - summary.hotLeadsCount: butuh tabel temperature lead (exhibitor_lead)
- *   yang belum dibangun
- * - booth.eventDayProgress ("Hari ke-2 dari 3") & operatingHoursLabel
- *   ("buka sampai 18.00"): events entity belum punya kolom tanggal/jam
- *   operasional yang cukup
- * - summary.unreadChatCount: Chat module (chat_message native) belum
- *   dibangun
+ * - booth.eventDayProgress & operatingHoursLabel: events entity belum
+ *   punya kolom tanggal/jam operasional yang cukup
+ * - summary.unreadChatCount: Chat module belum dibangun
  */
 @Injectable()
 export class HomeService {
@@ -36,22 +35,23 @@ export class HomeService {
     private readonly venueSpaceRepo: Repository<VenueSpace>,
     @InjectRepository(CheckinBooth)
     private readonly checkinRepo: Repository<CheckinBooth>,
-    @InjectRepository(MeetingMemberV2)
-    private readonly meetingMemberRepo: Repository<MeetingMemberV2>,
-    @InjectRepository(GuestsTicket)
-    private readonly guestsRepo: Repository<GuestsTicket>,
+    private readonly meetingsService: MeetingsService,
   ) {}
 
   async getHome(user: CurrentExhibitor) {
-    const [booth, leadsToday, leadsTotal, totalMeetings, pendingMeetingsCount, pendingActions] =
-      await Promise.all([
-        this.getBoothProfile(user),
-        this.getLeadsCount(user, true),
-        this.getLeadsCount(user, false),
-        this.getMeetingsCount(user, null),
-        this.getMeetingsCount(user, 'PE'),
-        this.getPendingActions(user),
-      ]);
+    const [booth, leadsToday, leadsTotal, visitorMeetings, exhibitorMeetings] = await Promise.all([
+      this.getBoothProfile(user),
+      this.getLeadsCount(user, true),
+      this.getLeadsCount(user, false),
+      this.meetingsService.list(user, 'visitor'),
+      this.meetingsService.list(user, 'exhibitor'),
+    ]);
+
+    const allMeetings = [...visitorMeetings, ...exhibitorMeetings];
+    const pendingMeetings = allMeetings
+      .filter((m) => m.approvalStatus === 'PE')
+      .sort((a, b) => (a.startDatetime && b.startDatetime ? +new Date(a.startDatetime) - +new Date(b.startDatetime) : 0))
+      .slice(0, 20);
 
     return {
       eventsId: user.eventsId,
@@ -66,11 +66,13 @@ export class HomeService {
         leadsToday,
         leadsTotal,
         hotLeadsCount: null, // TODO: butuh exhibitor_lead (temperature)
-        totalMeetings,
-        pendingMeetingsCount,
+        totalMeetings: allMeetings.length,
+        pendingMeetingsCount: pendingMeetings.length,
         unreadChatCount: null, // TODO: butuh Chat module
       },
-      pendingActions,
+      // Setiap item punya counterpart.type ('visitor'/'exhibitor') supaya
+      // UI tahu mau di-route ke tab mana kalau di-tap.
+      pendingActions: pendingMeetings,
     };
   }
 
@@ -98,8 +100,6 @@ export class HomeService {
       logo: company.logo,
       venueId: user.venueId,
       spaceId: user.spaceId,
-      // Badge nomor booth = spaceId (bukan nomor urut custom terpisah) -
-      // dikonfirmasi Sept 2026.
       boothNumber: String(user.spaceId).padStart(2, '0'),
       spaceName: space?.spaceName ?? null,
       spaceDetails: space?.spaceDetails ?? null,
@@ -116,8 +116,6 @@ export class HomeService {
       .andWhere('c.spaceId = :spaceId', { spaceId: user.spaceId });
 
     if (todayOnly) {
-      // Batas "hari ini" pakai kalender Asia/Jakarta, bukan timezone
-      // server - dihitung di level SQL supaya tidak tergantung locale Node.
       qb.andWhere(
         `c.checkinDatetime >= date_trunc('day', now() AT TIME ZONE 'Asia/Jakarta')`,
       ).andWhere(
@@ -127,79 +125,5 @@ export class HomeService {
 
     const result = await qb.getRawOne<{ count: string }>();
     return parseInt(result?.count ?? '0', 10);
-  }
-
-  private async getMeetingsCount(
-    user: CurrentExhibitor,
-    approvalStatus: string | null,
-  ): Promise<number> {
-    const qb = this.meetingMemberRepo
-      .createQueryBuilder('mm')
-      .innerJoin(EventsMeetingV2, 'm', 'm.eventsId = mm.eventsId AND m.id = mm.meetingId')
-      .where('mm.eventsId = :eventsId', { eventsId: user.eventsId })
-      .andWhere('mm.companyId = :companyId', { companyId: user.companyId })
-      .andWhere('mm.usertypeId = :usertypeId', { usertypeId: 'EX' });
-
-    if (approvalStatus) {
-      qb.andWhere('m.approvalStatus = :status', { status: approvalStatus });
-    }
-
-    return qb.getCount();
-  }
-
-  /**
-   * Screen: "Perlu ditindak" - list meeting yang nunggu approval, dengan
-   * nama requester (dari guests_ticket) + waktu diminta + suhu meeting
-   * (meeting_score, sudah ada di events_meeting_v2 - field ini persis
-   * sama fungsinya dengan konsep Hot/Warm/Cold, jadi bisa dipakai
-   * langsung tanpa nunggu exhibitor_lead).
-   */
-  private async getPendingActions(user: CurrentExhibitor) {
-    const rows = await this.meetingMemberRepo
-      .createQueryBuilder('mm')
-      .innerJoin(EventsMeetingV2, 'm', 'm.eventsId = mm.eventsId AND m.id = mm.meetingId')
-      .select([
-        'm.id AS meeting_id',
-        'm.meetingTitle AS meeting_title',
-        'm.startDatetime AS start_datetime',
-        'm.meetingScore AS meeting_score',
-        'mm.guestsId AS requester_guests_id',
-      ])
-      .where('mm.eventsId = :eventsId', { eventsId: user.eventsId })
-      .andWhere('mm.companyId = :companyId', { companyId: user.companyId })
-      .andWhere('mm.usertypeId = :usertypeId', { usertypeId: 'EX' })
-      .andWhere('m.approvalStatus = :status', { status: 'PE' })
-      .orderBy('m.startDatetime', 'ASC')
-      .limit(20)
-      .getRawMany<{
-        meeting_id: number;
-        meeting_title: string | null;
-        start_datetime: Date | null;
-        meeting_score: string | null;
-        requester_guests_id: number;
-      }>();
-
-    if (rows.length === 0) return [];
-
-    const guestIds = [...new Set(rows.map((r) => r.requester_guests_id))];
-    const guests = await this.guestsRepo
-      .createQueryBuilder('g')
-      .where('g.eventsId = :eventsId', { eventsId: user.eventsId })
-      .andWhere('g.guestsId IN (:...ids)', { ids: guestIds })
-      .getMany();
-
-    return rows.map((r) => {
-      const guest = guests.find((g) => g.guestsId === r.requester_guests_id);
-      return {
-        meetingId: r.meeting_id,
-        meetingTitle: r.meeting_title,
-        startDatetime: r.start_datetime,
-        temperature: r.meeting_score, // Hot/Warm/Cold, dari events_meeting_v2.meeting_score
-        requester: {
-          guestsId: r.requester_guests_id,
-          fullname: guest?.fullname ?? null,
-        },
-      };
-    });
   }
 }

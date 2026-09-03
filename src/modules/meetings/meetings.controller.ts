@@ -1,7 +1,7 @@
 import { Body, Controller, Get, Param, ParseIntPipe, Post, Query, UseGuards } from '@nestjs/common';
 import { AuthGuard } from '@nestjs/passport';
 import { ApiBearerAuth, ApiQuery, ApiTags } from '@nestjs/swagger';
-import { MeetingsService } from './meetings.service';
+import { MeetingsService, MeetingTabType } from './meetings.service';
 import { MeetingActionDto } from './dto/meeting-action.dto';
 import { CurrentUser, CurrentExhibitor } from '../../common/decorators/current-exhibitor.decorator';
 
@@ -12,10 +12,16 @@ import { CurrentUser, CurrentExhibitor } from '../../common/decorators/current-e
 export class MeetingsController {
   constructor(private readonly meetingsService: MeetingsService) {}
 
+  // Dua tab terpisah di UI: 'visitor' (E2V/V2E) dan 'exhibitor' (E2E).
   @Get()
+  @ApiQuery({ name: 'type', enum: ['visitor', 'exhibitor'], required: true })
   @ApiQuery({ name: 'status', required: false, description: 'PE (pending) / AP (approved) / CL (cancelled)' })
-  list(@CurrentUser() user: CurrentExhibitor, @Query('status') status?: string) {
-    return this.meetingsService.list(user, status);
+  list(
+    @CurrentUser() user: CurrentExhibitor,
+    @Query('type') type: MeetingTabType,
+    @Query('status') status?: string,
+  ) {
+    return this.meetingsService.list(user, type, status);
   }
 
   @Get(':meetingId')

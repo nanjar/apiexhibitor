@@ -5,19 +5,33 @@ import { EventsMeetingV2 } from './entities/events-meeting-v2.entity';
 import { MeetingMemberV2 } from './entities/meeting-member-v2.entity';
 import { ExhibitorMeetingAction } from './entities/exhibitor-meeting-action.entity';
 import { GuestsTicket } from '../guests/entities/guests-ticket.entity';
+import { ExhibitorHaveCompany } from '../exhibitors/entities/exhibitor-have-company.entity';
+import { ExhibitorContact } from '../exhibitors/entities/exhibitor-contact.entity';
+import { ExhibitorCompany } from '../exhibitors/entities/exhibitor-company.entity';
 import { CurrentExhibitor } from '../../common/decorators/current-exhibitor.decorator';
 import { MeetingActionDto } from './dto/meeting-action.dto';
 
+export type MeetingTabType = 'visitor' | 'exhibitor';
+
 /**
- * Meeting scope-nya per COMPANY (meeting_member_v2 gak punya venue_id/
- * space_id di skemanya), sama seperti User Management - bukan per booth
- * spesifik.
+ * KOREKSI PENTING (Sept 2026): meeting_member_v2.company_id TIDAK BOLEH
+ * dipakai untuk cari "meeting ini punya company siapa" - datanya tidak
+ * reliable. Cara yang benar:
  *
- * Approve/reject: tulis LANGSUNG ke mirror Postgres events_meeting_v2
- * (supaya UI approver sendiri langsung reflect, gak nunggu round-trip
- * push-job -> MySQL -> pull-sync ~6 menit) DAN antre ke staging
- * ExhibitorMeetingAction (supaya MySQL beneran ke-update, karena admin
- * panel PHP legacy masih baca approval_status ini langsung).
+ * 1. Ambil exhibitor_id tim company ini dari exhibitor_have_company.
+ * 2. Cari baris meeting_member_v2 usertype_id='EX' DENGAN guests_id ada
+ *    di daftar exhibitor_id tim tadi - guests_id pada baris EX itu
+ *    exhibitor_contact.id (BUKAN referensi guests_ticket), beda makna
+ *    dari baris usertype_id='VI' yang guests_id-nya betulan guests_ticket.
+ *
+ * Meeting bisa dua jenis (com_direction di events_meeting_v2):
+ * - E2V/V2E = Exhibitor vs Visitor -> lawan bicara dicari dari baris VI
+ * - E2E = Exhibitor vs Exhibitor lain -> lawan bicara dicari dari baris
+ *   EX LAIN (guests_id di luar daftar tim kita), company-nya di-resolve
+ *   lewat exhibitor_have_company punya exhibitor itu, BUKAN kolom
+ *   company_id di meeting_member_v2.
+ *
+ * UI: 2 tab terpisah (Meeting dgn Visitor vs Meeting dgn Exhibitor lain).
  */
 @Injectable()
 export class MeetingsService {
@@ -30,78 +44,58 @@ export class MeetingsService {
     private readonly meetingActionRepo: Repository<ExhibitorMeetingAction>,
     @InjectRepository(GuestsTicket)
     private readonly guestsRepo: Repository<GuestsTicket>,
+    @InjectRepository(ExhibitorHaveCompany)
+    private readonly haveCompanyRepo: Repository<ExhibitorHaveCompany>,
+    @InjectRepository(ExhibitorContact)
+    private readonly contactRepo: Repository<ExhibitorContact>,
+    @InjectRepository(ExhibitorCompany)
+    private readonly companyRepo: Repository<ExhibitorCompany>,
   ) {}
 
-  async list(user: CurrentExhibitor, status?: string) {
-    const qb = this.meetingMemberRepo
+  async list(user: CurrentExhibitor, type: MeetingTabType, status?: string) {
+    const teamExhibitorIds = await this.getTeamExhibitorIds(user);
+    if (teamExhibitorIds.length === 0) return [];
+
+    const directions = type === 'visitor' ? ['E2V', 'V2E'] : ['E2E'];
+
+    const ownRows = await this.meetingMemberRepo
       .createQueryBuilder('mm')
-      .innerJoin(EventsMeetingV2, 'm', 'm.eventsId = mm.eventsId AND m.id = mm.meetingId')
-      .select([
-        'm.id AS meeting_id',
-        'm.meetingTitle AS meeting_title',
-        'm.startDatetime AS start_datetime',
-        'm.endDatetime AS end_datetime',
-        'm.approvalStatus AS approval_status',
-        'm.status AS status',
-        'm.meetingScore AS meeting_score',
-        'mm.guestsId AS requester_guests_id',
-      ])
       .where('mm.eventsId = :eventsId', { eventsId: user.eventsId })
-      .andWhere('mm.companyId = :companyId', { companyId: user.companyId })
       .andWhere('mm.usertypeId = :usertypeId', { usertypeId: 'EX' })
-      .orderBy('m.startDatetime', 'ASC');
+      .andWhere('mm.guestsId IN (:...ids)', { ids: teamExhibitorIds })
+      .getMany();
 
-    if (status) {
-      qb.andWhere('m.approvalStatus = :status', { status });
-    }
+    if (ownRows.length === 0) return [];
+    const meetingIds = [...new Set(ownRows.map((r) => r.meetingId))];
 
-    const rows = await qb.getRawMany<{
-      meeting_id: number;
-      meeting_title: string | null;
-      start_datetime: Date | null;
-      end_datetime: Date | null;
-      approval_status: string;
-      status: string | null;
-      meeting_score: string | null;
-      requester_guests_id: number;
-    }>();
+    const meetings = await this.meetingRepo
+      .createQueryBuilder('m')
+      .where('m.eventsId = :eventsId', { eventsId: user.eventsId })
+      .andWhere('m.id IN (:...ids)', { ids: meetingIds })
+      .andWhere('m.comDirection IN (:...directions)', { directions })
+      .orderBy('m.startDatetime', 'ASC')
+      .getMany();
 
-    return this.attachRequesterNames(user.eventsId, rows);
+    const filtered = status ? meetings.filter((m) => m.approvalStatus === status) : meetings;
+    return this.attachCounterparts(user, filtered, type, teamExhibitorIds);
   }
 
   async detail(user: CurrentExhibitor, meetingId: number) {
+    const teamExhibitorIds = await this.getTeamExhibitorIds(user);
+    const allExRows = await this.meetingMemberRepo.find({
+      where: { eventsId: user.eventsId, meetingId, usertypeId: 'EX' },
+    });
+    const belongsToUs = allExRows.some((r) => teamExhibitorIds.includes(r.guestsId));
+    if (!belongsToUs) throw new NotFoundException('Meeting ini bukan untuk company kamu');
+
     const meeting = await this.meetingRepo.findOne({
       where: { eventsId: user.eventsId, id: meetingId },
     });
     if (!meeting) throw new NotFoundException('Meeting tidak ditemukan');
 
-    const membership = await this.meetingMemberRepo.findOne({
-      where: {
-        eventsId: user.eventsId,
-        meetingId,
-        companyId: user.companyId,
-        usertypeId: 'EX',
-      },
-    });
-    if (!membership) throw new NotFoundException('Meeting ini bukan untuk company kamu');
-
-    const guest = await this.guestsRepo.findOne({
-      where: { eventsId: user.eventsId, guestsId: membership.guestsId },
-    });
-
-    return {
-      meetingId: meeting.id,
-      meetingTitle: meeting.meetingTitle,
-      startDatetime: meeting.startDatetime,
-      endDatetime: meeting.endDatetime,
-      approvalStatus: meeting.approvalStatus,
-      status: meeting.status,
-      temperature: meeting.meetingScore,
-      requester: {
-        guestsId: membership.guestsId,
-        fullname: guest?.fullname ?? null,
-      },
-    };
+    const type: MeetingTabType = meeting.comDirection === 'E2E' ? 'exhibitor' : 'visitor';
+    const [result] = await this.attachCounterparts(user, [meeting], type, teamExhibitorIds);
+    return result;
   }
 
   async approve(user: CurrentExhibitor, meetingId: number, dto: MeetingActionDto) {
@@ -118,15 +112,12 @@ export class MeetingsService {
     action: 'APPROVE' | 'REJECT',
     notes?: string,
   ) {
-    const membership = await this.meetingMemberRepo.findOne({
-      where: {
-        eventsId: user.eventsId,
-        meetingId,
-        companyId: user.companyId,
-        usertypeId: 'EX',
-      },
+    const teamExhibitorIds = await this.getTeamExhibitorIds(user);
+    const exRows = await this.meetingMemberRepo.find({
+      where: { eventsId: user.eventsId, meetingId, usertypeId: 'EX' },
     });
-    if (!membership) {
+    const belongsToUs = exRows.some((r) => teamExhibitorIds.includes(r.guestsId));
+    if (!belongsToUs) {
       throw new BadRequestException('Meeting ini bukan untuk company kamu');
     }
 
@@ -143,9 +134,6 @@ export class MeetingsService {
     const approvalStatus = action === 'APPROVE' ? 'AP' : 'CL';
     const status = action === 'APPROVE' ? 'OPEN' : 'CANCEL';
 
-    // Optimistic write ke mirror - nilai yang ditulis SAMA PERSIS dengan
-    // yang bakal ditulis push-job ke MySQL, jadi pull-sync berikutnya
-    // cuma konfirmasi, bukan menimpa balik dengan nilai beda.
     meeting.approvalStatus = approvalStatus;
     meeting.status = status;
     await this.meetingRepo.save(meeting);
@@ -164,33 +152,129 @@ export class MeetingsService {
     return { meetingId, approvalStatus, status };
   }
 
-  private async attachRequesterNames<
-    T extends { requester_guests_id: number },
-  >(eventsId: number, rows: T[]) {
-    if (rows.length === 0) return [];
+  private async getTeamExhibitorIds(user: CurrentExhibitor): Promise<number[]> {
+    const links = await this.haveCompanyRepo.find({
+      where: { eventsId: user.eventsId, companyId: user.companyId },
+    });
+    return links.map((l) => l.exhibitorId);
+  }
 
-    const guestIds = [...new Set(rows.map((r) => r.requester_guests_id))];
-    const guests = await this.guestsRepo
-      .createQueryBuilder('g')
-      .where('g.eventsId = :eventsId', { eventsId })
-      .andWhere('g.guestsId IN (:...ids)', { ids: guestIds })
+  private async attachCounterparts(
+    user: CurrentExhibitor,
+    meetings: EventsMeetingV2[],
+    type: MeetingTabType,
+    teamExhibitorIds: number[],
+  ) {
+    if (meetings.length === 0) return [];
+    const meetingIds = meetings.map((m) => m.id);
+
+    if (type === 'visitor') {
+      const viRows = await this.meetingMemberRepo
+        .createQueryBuilder('mm')
+        .where('mm.eventsId = :eventsId', { eventsId: user.eventsId })
+        .andWhere('mm.meetingId IN (:...ids)', { ids: meetingIds })
+        .andWhere('mm.usertypeId = :usertypeId', { usertypeId: 'VI' })
+        .getMany();
+
+      const guestIds = [...new Set(viRows.map((r) => r.guestsId))];
+      const guests = guestIds.length
+        ? await this.guestsRepo
+            .createQueryBuilder('g')
+            .where('g.eventsId = :eventsId', { eventsId: user.eventsId })
+            .andWhere('g.guestsId IN (:...ids)', { ids: guestIds })
+            .getMany()
+        : [];
+
+      return meetings.map((m) => {
+        const viRow = viRows.find((r) => r.meetingId === m.id);
+        const guest = viRow ? guests.find((g) => g.guestsId === viRow.guestsId) : null;
+        return this.toMeetingSummary(m, {
+          type: 'visitor',
+          guestsId: viRow?.guestsId ?? null,
+          fullname: guest?.fullname ?? null,
+          companyName: null,
+        });
+      });
+    }
+
+    // type === 'exhibitor': lawan bicara = baris EX LAIN (guests_id di
+    // luar tim kita) untuk meeting_id yang sama.
+    const otherExRows = await this.meetingMemberRepo
+      .createQueryBuilder('mm')
+      .where('mm.eventsId = :eventsId', { eventsId: user.eventsId })
+      .andWhere('mm.meetingId IN (:...ids)', { ids: meetingIds })
+      .andWhere('mm.usertypeId = :usertypeId', { usertypeId: 'EX' })
+      .andWhere(
+        teamExhibitorIds.length > 0 ? 'mm.guestsId NOT IN (:...teamIds)' : '1=1',
+        teamExhibitorIds.length > 0 ? { teamIds: teamExhibitorIds } : {},
+      )
       .getMany();
 
-    return rows.map((r: any) => {
-      const guest = guests.find((g) => g.guestsId === r.requester_guests_id);
-      return {
-        meetingId: r.meeting_id,
-        meetingTitle: r.meeting_title,
-        startDatetime: r.start_datetime,
-        endDatetime: r.end_datetime,
-        approvalStatus: r.approval_status,
-        status: r.status,
-        temperature: r.meeting_score,
-        requester: {
-          guestsId: r.requester_guests_id,
-          fullname: guest?.fullname ?? null,
-        },
-      };
+    const otherExhibitorIds = [...new Set(otherExRows.map((r) => r.guestsId))];
+    const [otherContacts, otherHaveCompany] = await Promise.all([
+      otherExhibitorIds.length
+        ? this.contactRepo
+            .createQueryBuilder('c')
+            .where('c.eventsId = :eventsId', { eventsId: user.eventsId })
+            .andWhere('c.id IN (:...ids)', { ids: otherExhibitorIds })
+            .getMany()
+        : Promise.resolve([]),
+      otherExhibitorIds.length
+        ? this.haveCompanyRepo
+            .createQueryBuilder('h')
+            .where('h.eventsId = :eventsId', { eventsId: user.eventsId })
+            .andWhere('h.exhibitorId IN (:...ids)', { ids: otherExhibitorIds })
+            .getMany()
+        : Promise.resolve([]),
+    ]);
+
+    const otherCompanyIds = [...new Set(otherHaveCompany.map((h) => h.companyId))];
+    const otherCompanies = otherCompanyIds.length
+      ? await this.companyRepo
+          .createQueryBuilder('c')
+          .where('c.eventsId = :eventsId', { eventsId: user.eventsId })
+          .andWhere('c.id IN (:...ids)', { ids: otherCompanyIds })
+          .getMany()
+      : [];
+
+    return meetings.map((m) => {
+      const otherRow = otherExRows.find((r) => r.meetingId === m.id);
+      const contact = otherRow ? otherContacts.find((c) => c.id === otherRow.guestsId) : null;
+      // Satu exhibitor bisa terhubung ke >1 company (exhibitor_have_company) -
+      // ambil yang pertama, edge case multi-company E2E belum ditangani presisi.
+      const link = otherRow
+        ? otherHaveCompany.find((h) => h.exhibitorId === otherRow.guestsId)
+        : null;
+      const company = link ? otherCompanies.find((c) => c.id === link.companyId) : null;
+
+      return this.toMeetingSummary(m, {
+        type: 'exhibitor',
+        guestsId: otherRow?.guestsId ?? null,
+        fullname: contact?.fullname ?? null,
+        companyName: company?.companyName ?? null,
+      });
     });
+  }
+
+  private toMeetingSummary(
+    m: EventsMeetingV2,
+    counterpart: {
+      type: MeetingTabType;
+      guestsId: number | null;
+      fullname: string | null;
+      companyName: string | null;
+    },
+  ) {
+    return {
+      meetingId: m.id,
+      meetingTitle: m.meetingTitle,
+      startDatetime: m.startDatetime,
+      endDatetime: m.endDatetime,
+      approvalStatus: m.approvalStatus,
+      status: m.status,
+      temperature: m.meetingScore,
+      comDirection: m.comDirection,
+      counterpart,
+    };
   }
 }
