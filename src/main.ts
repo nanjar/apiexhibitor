@@ -45,6 +45,7 @@ async function bootstrap() {
         'access-token',
       )
       .addTag('Auth', 'Login via event key + nomor HP, refresh token')
+      .addTag('Home', 'Home Dashboard - profil booth, lokasi, ringkasan lead & meeting')
       .build();
 
     const document = SwaggerModule.createDocument(app, config);
