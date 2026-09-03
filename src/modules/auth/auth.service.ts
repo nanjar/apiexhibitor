@@ -317,18 +317,23 @@ export class AuthService {
 
     if (!member) {
       const isOwner = contact.userLevel === 'ADM' ? 'Y' : 'N';
+      // OPR hanya bisa scan, tidak bisa chat. ADM (owner) dapat keduanya.
+      // Kalau nanti ada user_level lain di luar ADM/OPR, default-nya
+      // sama seperti OPR (paling terbatas), bukan otomatis dapat akses.
+      const canScan = 'Y';
+      const canChat = contact.userLevel === 'ADM' ? 'Y' : 'N';
       member = this.memberRepo.create({
         eventsId,
         exhibitorId: contact.id,
         memberStatus: 'ACTIVE',
-        canScan: 'Y',
-        canChat: 'Y',
+        canScan,
+        canChat,
         isOwner,
         activatedAt: now,
         lastUpdate: now,
       });
       await this.memberRepo.save(member);
-      await this.queuePushAction(eventsId, contact.id, 'ACTIVATE', contact.id, 'Y', 'Y');
+      await this.queuePushAction(eventsId, contact.id, 'ACTIVATE', contact.id, canScan, canChat);
     } else if (member.memberStatus === 'INVITED') {
       member.memberStatus = 'ACTIVE';
       member.activatedAt = now;
