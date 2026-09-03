@@ -30,6 +30,9 @@ export class ExhibitorMeetingAction {
   @Column({ name: 'notes', type: 'text', nullable: true })
   notes: string | null;
 
+  @Column({ name: 'score', type: 'varchar', length: 50, nullable: true })
+  score: string | null;
+
   @Column({ name: 'created_at', type: 'timestamptz' })
   createdAt: Date;
 

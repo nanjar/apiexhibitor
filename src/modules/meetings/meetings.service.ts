@@ -9,7 +9,8 @@ import { ExhibitorHaveCompany } from '../exhibitors/entities/exhibitor-have-comp
 import { ExhibitorContact } from '../exhibitors/entities/exhibitor-contact.entity';
 import { ExhibitorCompany } from '../exhibitors/entities/exhibitor-company.entity';
 import { CurrentExhibitor } from '../../common/decorators/current-exhibitor.decorator';
-import { MeetingActionDto } from './dto/meeting-action.dto';
+import { ApproveMeetingDto } from './dto/approve-meeting.dto';
+import { RejectMeetingDto } from './dto/reject-meeting.dto';
 
 export type MeetingTabType = 'visitor' | 'exhibitor';
 
@@ -98,19 +99,20 @@ export class MeetingsService {
     return result;
   }
 
-  async approve(user: CurrentExhibitor, meetingId: number, dto: MeetingActionDto) {
-    return this.applyDecision(user, meetingId, 'APPROVE', dto.notes);
+  async approve(user: CurrentExhibitor, meetingId: number, dto: ApproveMeetingDto) {
+    return this.applyDecision(user, meetingId, 'APPROVE', dto.notes, dto.score);
   }
 
-  async reject(user: CurrentExhibitor, meetingId: number, dto: MeetingActionDto) {
-    return this.applyDecision(user, meetingId, 'REJECT', dto.notes);
+  async reject(user: CurrentExhibitor, meetingId: number, dto: RejectMeetingDto) {
+    return this.applyDecision(user, meetingId, 'REJECT', dto.notes, null);
   }
 
   private async applyDecision(
     user: CurrentExhibitor,
     meetingId: number,
     action: 'APPROVE' | 'REJECT',
-    notes?: string,
+    notes: string | undefined,
+    score: string | null,
   ) {
     const teamExhibitorIds = await this.getTeamExhibitorIds(user);
     const exRows = await this.meetingMemberRepo.find({
@@ -136,6 +138,7 @@ export class MeetingsService {
 
     meeting.approvalStatus = approvalStatus;
     meeting.status = status;
+    if (score) meeting.meetingScore = score;
     await this.meetingRepo.save(meeting);
 
     await this.meetingActionRepo.save(
@@ -145,11 +148,12 @@ export class MeetingsService {
         action,
         actorExhibitorId: user.exhibitorId,
         notes: notes ?? null,
+        score,
         createdAt: new Date(),
       }),
     );
 
-    return { meetingId, approvalStatus, status };
+    return { meetingId, approvalStatus, status, score: meeting.meetingScore };
   }
 
   private async getTeamExhibitorIds(user: CurrentExhibitor): Promise<number[]> {

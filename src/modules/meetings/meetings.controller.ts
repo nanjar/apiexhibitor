@@ -2,7 +2,8 @@ import { Body, Controller, Get, Param, ParseIntPipe, Post, Query, UseGuards } fr
 import { AuthGuard } from '@nestjs/passport';
 import { ApiBearerAuth, ApiQuery, ApiTags } from '@nestjs/swagger';
 import { MeetingsService, MeetingTabType } from './meetings.service';
-import { MeetingActionDto } from './dto/meeting-action.dto';
+import { ApproveMeetingDto } from './dto/approve-meeting.dto';
+import { RejectMeetingDto } from './dto/reject-meeting.dto';
 import { CurrentUser, CurrentExhibitor } from '../../common/decorators/current-exhibitor.decorator';
 
 @ApiTags('Meeting')
@@ -36,7 +37,7 @@ export class MeetingsController {
   approve(
     @CurrentUser() user: CurrentExhibitor,
     @Param('meetingId', ParseIntPipe) meetingId: number,
-    @Body() dto: MeetingActionDto,
+    @Body() dto: ApproveMeetingDto,
   ) {
     return this.meetingsService.approve(user, meetingId, dto);
   }
@@ -45,7 +46,7 @@ export class MeetingsController {
   reject(
     @CurrentUser() user: CurrentExhibitor,
     @Param('meetingId', ParseIntPipe) meetingId: number,
-    @Body() dto: MeetingActionDto,
+    @Body() dto: RejectMeetingDto,
   ) {
     return this.meetingsService.reject(user, meetingId, dto);
   }
