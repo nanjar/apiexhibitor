@@ -1,7 +1,10 @@
 import { Injectable } from '@nestjs/common';
+import { InjectRepository } from '@nestjs/typeorm';
+import { Repository } from 'typeorm';
 import * as ExcelJS from 'exceljs';
 import { BoothService } from '../booth/booth.service';
 import { MeetingsService } from '../meetings/meetings.service';
+import { LinkClickLog } from './entities/link-click-log.entity';
 import { CurrentExhibitor } from '../../common/decorators/current-exhibitor.decorator';
 
 /**
@@ -16,15 +19,23 @@ export class ReportsService {
   constructor(
     private readonly boothService: BoothService,
     private readonly meetingsService: MeetingsService,
+    @InjectRepository(LinkClickLog)
+    private readonly linkClickLogRepo: Repository<LinkClickLog>,
   ) {}
 
   async getSummary(user: CurrentExhibitor, from?: string, to?: string) {
     const { start, end } = this.resolveRange(from, to);
 
-    const [leadsResult, visitorMeetings, exhibitorMeetings] = await Promise.all([
+    const [leadsResult, visitorMeetings, exhibitorMeetings, clicks] = await Promise.all([
       this.boothService.listLeads(user),
       this.meetingsService.list(user, 'visitor'),
       this.meetingsService.list(user, 'exhibitor'),
+      this.linkClickLogRepo
+        .createQueryBuilder('c')
+        .where('c.eventsId = :eventsId', { eventsId: user.eventsId })
+        .andWhere('c.companyId = :companyId', { companyId: user.companyId })
+        .andWhere('c.clickedAt >= :start AND c.clickedAt <= :end', { start, end })
+        .getMany(),
     ]);
 
     // Cuma hitung yang sudah confirmed (bukan pending) & masuk rentang
@@ -61,10 +72,24 @@ export class ReportsService {
       withExhibitor: allMeetings.filter((m) => m.comDirection === 'E2E').length,
     };
 
+    const clickSummary = {
+      total: clicks.length,
+      byType: {
+        instagram: clicks.filter((c) => c.linkType === 'INSTAGRAM').length,
+        facebook: clicks.filter((c) => c.linkType === 'FACEBOOK').length,
+        tiktok: clicks.filter((c) => c.linkType === 'TIKTOK').length,
+        twitter: clicks.filter((c) => c.linkType === 'TWITTER').length,
+        website: clicks.filter((c) => c.linkType === 'WEBSITE').length,
+        brochure: clicks.filter((c) => c.linkType === 'BROCHURE').length,
+        promo: clicks.filter((c) => c.linkType === 'PROMO').length,
+      },
+    };
+
     return {
       range: { from: start.toISOString(), to: end.toISOString() },
       leads: leadSummary,
       meetings: meetingSummary,
+      clicks: clickSummary,
     };
   }
 
