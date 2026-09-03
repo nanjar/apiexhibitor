@@ -7,6 +7,7 @@ import { envValidationSchema } from './config/env.validation';
 import { AuthModule } from './modules/auth/auth.module';
 import { HomeModule } from './modules/home/home.module';
 import { MembersModule } from './modules/members/members.module';
+import { MeetingsModule } from './modules/meetings/meetings.module';
 
 @Module({
   imports: [
@@ -24,6 +25,7 @@ import { MembersModule } from './modules/members/members.module';
     AuthModule,
     HomeModule,
     MembersModule,
+    MeetingsModule,
   ],
 })
 export class AppModule {}
