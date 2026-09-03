@@ -7,6 +7,7 @@ import { Event } from '../events/entities/event.entity';
 import { ExhibitorContact } from '../exhibitors/entities/exhibitor-contact.entity';
 import { ExhibitorMemberStatus } from '../exhibitors/entities/exhibitor-member-status.entity';
 import { ExhibitorMemberAction } from '../exhibitors/entities/exhibitor-member-action.entity';
+import { ExhibitorDeviceToken } from '../exhibitors/entities/exhibitor-device-token.entity';
 import { LoginDto } from './dto/login.dto';
 
 export interface JwtPayload {
@@ -31,6 +32,8 @@ export class AuthService {
     private readonly memberRepo: Repository<ExhibitorMemberStatus>,
     @InjectRepository(ExhibitorMemberAction)
     private readonly memberActionRepo: Repository<ExhibitorMemberAction>,
+    @InjectRepository(ExhibitorDeviceToken)
+    private readonly deviceTokenRepo: Repository<ExhibitorDeviceToken>,
     private readonly jwtService: JwtService,
     private readonly configService: ConfigService,
   ) {}
@@ -60,7 +63,46 @@ export class AuthService {
       );
     }
 
+    if (dto.deviceId) {
+      await this.recordDeviceToken(event.id, contact.id, dto.deviceId, dto.platform);
+    }
+
     return this.buildTokenResponse(event, contact, member);
+  }
+
+  /**
+   * Upsert device token FCM - dipanggil tiap login supaya token tetap
+   * fresh (mis. kalau app di-uninstall lalu install ulang, dapat
+   * device_id baru). Tabel native, bukan tulis ke exhibitor_contact -
+   * lihat komentar di entity ExhibitorDeviceToken.
+   */
+  private async recordDeviceToken(
+    eventsId: number,
+    exhibitorId: number,
+    deviceId: string,
+    platform?: string,
+  ) {
+    const now = new Date();
+    const existing = await this.deviceTokenRepo.findOne({
+      where: { eventsId, exhibitorId, deviceId },
+    });
+
+    if (existing) {
+      existing.lastSeenAt = now;
+      if (platform) existing.platform = platform;
+      await this.deviceTokenRepo.save(existing);
+    } else {
+      await this.deviceTokenRepo.save(
+        this.deviceTokenRepo.create({
+          eventsId,
+          exhibitorId,
+          deviceId,
+          platform: platform ?? null,
+          createdAt: now,
+          lastSeenAt: now,
+        }),
+      );
+    }
   }
 
   async refresh(refreshToken: string) {

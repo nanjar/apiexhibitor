@@ -7,6 +7,7 @@ import { Event } from '../events/entities/event.entity';
 import { ExhibitorContact } from '../exhibitors/entities/exhibitor-contact.entity';
 import { ExhibitorMemberStatus } from '../exhibitors/entities/exhibitor-member-status.entity';
 import { ExhibitorMemberAction } from '../exhibitors/entities/exhibitor-member-action.entity';
+import { ExhibitorDeviceToken } from '../exhibitors/entities/exhibitor-device-token.entity';
 import { AuthController } from './auth.controller';
 import { AuthService } from './auth.service';
 import { JwtStrategy } from './strategies/jwt.strategy';
@@ -18,6 +19,7 @@ import { JwtStrategy } from './strategies/jwt.strategy';
       ExhibitorContact,
       ExhibitorMemberStatus,
       ExhibitorMemberAction,
+      ExhibitorDeviceToken,
     ]),
     PassportModule,
     JwtModule.registerAsync({
