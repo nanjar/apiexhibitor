@@ -8,10 +8,26 @@ import { ExhibitorContact } from '../exhibitors/entities/exhibitor-contact.entit
 import { ExhibitorMemberStatus } from '../exhibitors/entities/exhibitor-member-status.entity';
 import { ExhibitorMemberAction } from '../exhibitors/entities/exhibitor-member-action.entity';
 import { ExhibitorDeviceToken } from '../exhibitors/entities/exhibitor-device-token.entity';
+import { ExhibitorHaveCompany } from '../exhibitors/entities/exhibitor-have-company.entity';
+import { ExhibitorCompany } from '../exhibitors/entities/exhibitor-company.entity';
 import { LoginDto } from './dto/login.dto';
+import { SelectCompanyDto } from './dto/select-company.dto';
+
+/** Token identitas SEMENTARA hasil /auth/login - BELUM bisa dipakai akses
+ * endpoint manapun selain /auth/select-company. Beda dari JwtPayload biasa:
+ * tidak ada companyId/isOwner/canScan/canChat karena itu semua baru
+ * ditentukan SETELAH company dipilih (satu exhibitor bisa beda permission
+ * di company berbeda kalau nanti membership per-company diterapkan). */
+export interface IdentityTokenPayload {
+  stage: 'IDENTITY';
+  sub: number; // exhibitor_contact.id
+  eventsId: number;
+  phone: string;
+  fullname: string;
+}
 
 export interface JwtPayload {
-  sub: number; // exhibitor_contact.id (== exhibitor_id di tabel lain)
+  sub: number;
   eventsId: number;
   companyId: number;
   phone: string;
@@ -34,13 +50,18 @@ export class AuthService {
     private readonly memberActionRepo: Repository<ExhibitorMemberAction>,
     @InjectRepository(ExhibitorDeviceToken)
     private readonly deviceTokenRepo: Repository<ExhibitorDeviceToken>,
+    @InjectRepository(ExhibitorHaveCompany)
+    private readonly haveCompanyRepo: Repository<ExhibitorHaveCompany>,
+    @InjectRepository(ExhibitorCompany)
+    private readonly companyRepo: Repository<ExhibitorCompany>,
     private readonly jwtService: JwtService,
     private readonly configService: ConfigService,
   ) {}
 
   // Screen: Login exhibitor app — event key (6-digit) + nomor HP.
-  // TANPA OTP (keputusan Sept 2026: low-stakes internal tool untuk staff
-  // booth, cukup nomor HP yang sudah terdaftar admin/organizer).
+  // TANPA OTP. Langkah 1 dari 2: identitas tervalidasi, tapi belum dapat
+  // akses penuh - exhibitor harus pilih company dulu (satu exhibitor bisa
+  // mewakili beberapa company, lihat exhibitor_have_company).
   async login(dto: LoginDto) {
     const event = await this.eventRepo.findOne({ where: { evToken: dto.eventKey } });
     if (!event) {
@@ -67,42 +88,72 @@ export class AuthService {
       await this.recordDeviceToken(event.id, contact.id, dto.deviceId, dto.platform);
     }
 
-    return this.buildTokenResponse(event, contact, member);
-  }
+    const companies = await this.getCompaniesForExhibitor(event.id, contact.id);
 
-  /**
-   * Upsert device token FCM - dipanggil tiap login supaya token tetap
-   * fresh (mis. kalau app di-uninstall lalu install ulang, dapat
-   * device_id baru). Tabel native, bukan tulis ke exhibitor_contact -
-   * lihat komentar di entity ExhibitorDeviceToken.
-   */
-  private async recordDeviceToken(
-    eventsId: number,
-    exhibitorId: number,
-    deviceId: string,
-    platform?: string,
-  ) {
-    const now = new Date();
-    const existing = await this.deviceTokenRepo.findOne({
-      where: { eventsId, exhibitorId, deviceId },
+    const identityPayload: IdentityTokenPayload = {
+      stage: 'IDENTITY',
+      sub: contact.id,
+      eventsId: event.id,
+      phone: contact.phone,
+      fullname: contact.fullname,
+    };
+    // Identity token umurnya pendek (5 menit) - cuma dipakai buat jembatan
+    // ke /auth/select-company, bukan token sesi.
+    const identityToken = await this.jwtService.signAsync(identityPayload, {
+      secret: this.configService.get<string>('JWT_ACCESS_SECRET'),
+      expiresIn: '5m',
     });
 
-    if (existing) {
-      existing.lastSeenAt = now;
-      if (platform) existing.platform = platform;
-      await this.deviceTokenRepo.save(existing);
-    } else {
-      await this.deviceTokenRepo.save(
-        this.deviceTokenRepo.create({
-          eventsId,
-          exhibitorId,
-          deviceId,
-          platform: platform ?? null,
-          createdAt: now,
-          lastSeenAt: now,
-        }),
-      );
+    return {
+      identityToken,
+      exhibitor: {
+        fullname: contact.fullname,
+        phone: contact.phone,
+        isOwner: member.isOwner === 'Y',
+      },
+      companies,
+    };
+  }
+
+  // Screen: Pilih company (kalau exhibitor mewakili >1 company). Langkah
+  // 2 dari 2: tukar identityToken + companyId pilihan -> access/refresh
+  // token penuh, siap dipakai ke semua endpoint lain.
+  async selectCompany(dto: SelectCompanyDto) {
+    let identity: IdentityTokenPayload;
+    try {
+      identity = await this.jwtService.verifyAsync<IdentityTokenPayload>(dto.identityToken, {
+        secret: this.configService.get<string>('JWT_ACCESS_SECRET'),
+      });
+    } catch {
+      throw new UnauthorizedException('Identity token tidak valid atau sudah kedaluwarsa, login ulang');
     }
+    if (identity.stage !== 'IDENTITY') {
+      throw new UnauthorizedException('Token tidak valid untuk langkah ini');
+    }
+
+    const allowed = await this.haveCompanyRepo.findOne({
+      where: { eventsId: identity.eventsId, exhibitorId: identity.sub, companyId: dto.companyId },
+    });
+    if (!allowed) {
+      throw new ForbiddenException('Kamu tidak terhubung ke company ini');
+    }
+
+    // Re-check status (bukan cuma percaya identity token) - status bisa
+    // saja berubah di antara langkah login dan select-company.
+    const contact = await this.contactRepo.findOne({
+      where: { eventsId: identity.eventsId, id: identity.sub },
+    });
+    if (!contact || contact.approvalStatus !== 'AP') {
+      throw new UnauthorizedException('Akun exhibitor tidak valid');
+    }
+    const member = await this.memberRepo.findOne({
+      where: { eventsId: identity.eventsId, exhibitorId: identity.sub },
+    });
+    if (!member || member.memberStatus === 'REMOVED') {
+      throw new ForbiddenException('Akses kamu sudah dicabut');
+    }
+
+    return this.buildTokenResponse(identity.eventsId, dto.companyId, contact, member);
   }
 
   async refresh(refreshToken: string) {
@@ -121,7 +172,12 @@ export class AuthService {
     if (!contact) {
       throw new UnauthorizedException('Akun exhibitor tidak ditemukan');
     }
-
+    const allowed = await this.haveCompanyRepo.findOne({
+      where: { eventsId: payload.eventsId, exhibitorId: payload.sub, companyId: payload.companyId },
+    });
+    if (!allowed) {
+      throw new ForbiddenException('Kamu tidak lagi terhubung ke company ini');
+    }
     const member = await this.memberRepo.findOne({
       where: { eventsId: payload.eventsId, exhibitorId: contact.id },
     });
@@ -129,15 +185,27 @@ export class AuthService {
       throw new ForbiddenException('Akses kamu untuk booth ini sudah dicabut');
     }
 
-    const event = await this.eventRepo.findOne({ where: { id: payload.eventsId } });
-    return this.buildTokenResponse(event!, contact, member);
+    return this.buildTokenResponse(payload.eventsId, payload.companyId, contact, member);
   }
 
-  /**
-   * Cari kontak berdasarkan nomor HP. Coba beberapa variasi format
-   * (dengan/tanpa 0 di depan, dengan/tanpa 62) karena data phone di MySQL
-   * legacy kemungkinan besar tidak konsisten formatnya.
-   */
+  private async getCompaniesForExhibitor(eventsId: number, exhibitorId: number) {
+    const links = await this.haveCompanyRepo.find({ where: { eventsId, exhibitorId } });
+    if (links.length === 0) return [];
+
+    const companyIds = links.map((l) => l.companyId);
+    const companies = await this.companyRepo
+      .createQueryBuilder('c')
+      .where('c.eventsId = :eventsId', { eventsId })
+      .andWhere('c.id IN (:...companyIds)', { companyIds })
+      .getMany();
+
+    return companies.map((c) => ({
+      companyId: c.id,
+      companyName: c.companyName,
+      logo: c.logo,
+    }));
+  }
+
   private async findContactByPhone(
     eventsId: number,
     normalizedPhone: string,
@@ -166,26 +234,9 @@ export class AuthService {
       variants.add('0' + digitsOnly.slice(2));
       variants.add('+' + digitsOnly);
     }
-    if (digitsOnly.startsWith('620')) {
-      // hindari salah normalisasi 62 + 0xxx jadi double
-      variants.delete('62' + digitsOnly.slice(1));
-    }
     return Array.from(variants);
   }
 
-  /**
-   * Ambil status membership. Kalau BELUM ADA SAMA SEKALI (login pertama
-   * kali exhibitor ini di apiexhibitor) atau statusnya masih INVITED,
-   * lakukan bootstrap/activate LANGSUNG ke mirror Postgres supaya sesi
-   * ini langsung bisa dipakai (tidak nunggu push-job 1 menit), SEKALIGUS
-   * antre ke staging (ExhibitorMemberAction) supaya MySQL ikut update
-   * dalam <=1 menit.
-   *
-   * Ini SATU-SATUNYA pengecualian di seluruh sistem yang menulis langsung
-   * ke tabel mirror - aman karena baris yang ditulis baru/computed
-   * konsisten dengan apa yang akan ditulis MySQL, jadi pull-sync
-   * berikutnya cuma mengonfirmasi, bukan menimpa balik.
-   */
   private async resolveMembership(
     eventsId: number,
     contact: ExhibitorContact,
@@ -193,7 +244,6 @@ export class AuthService {
     let member = await this.memberRepo.findOne({
       where: { eventsId, exhibitorId: contact.id },
     });
-
     const now = new Date();
 
     if (!member) {
@@ -249,15 +299,44 @@ export class AuthService {
     );
   }
 
+  private async recordDeviceToken(
+    eventsId: number,
+    exhibitorId: number,
+    deviceId: string,
+    platform?: string,
+  ) {
+    const now = new Date();
+    const existing = await this.deviceTokenRepo.findOne({
+      where: { eventsId, exhibitorId, deviceId },
+    });
+    if (existing) {
+      existing.lastSeenAt = now;
+      if (platform) existing.platform = platform;
+      await this.deviceTokenRepo.save(existing);
+    } else {
+      await this.deviceTokenRepo.save(
+        this.deviceTokenRepo.create({
+          eventsId,
+          exhibitorId,
+          deviceId,
+          platform: platform ?? null,
+          createdAt: now,
+          lastSeenAt: now,
+        }),
+      );
+    }
+  }
+
   private async buildTokenResponse(
-    event: Event,
+    eventsId: number,
+    companyId: number,
     contact: ExhibitorContact,
     member: ExhibitorMemberStatus,
   ) {
     const payload: JwtPayload = {
       sub: contact.id,
-      eventsId: event.id,
-      companyId: contact.companyId,
+      eventsId,
+      companyId,
       phone: contact.phone,
       fullname: contact.fullname,
       isOwner: member.isOwner === 'Y',
@@ -281,8 +360,8 @@ export class AuthService {
       refreshToken,
       exhibitor: {
         id: contact.id,
-        eventsId: event.id,
-        companyId: contact.companyId,
+        eventsId,
+        companyId,
         fullname: contact.fullname,
         phone: contact.phone,
         jobTitle: contact.jobTitle,
