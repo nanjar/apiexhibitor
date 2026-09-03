@@ -12,6 +12,7 @@ import { BoothModule } from './modules/booth/booth.module';
 import { ChatModule } from './modules/chat/chat.module';
 import { AgendaModule } from './modules/agenda/agenda.module';
 import { NotificationsModule } from './modules/notifications/notifications.module';
+import { ReportsModule } from './modules/reports/reports.module';
 
 @Module({
   imports: [
@@ -34,6 +35,7 @@ import { NotificationsModule } from './modules/notifications/notifications.modul
     ChatModule,
     AgendaModule,
     NotificationsModule,
+    ReportsModule,
   ],
 })
 export class AppModule {}

@@ -24,5 +24,6 @@ import { BoothService } from './booth.service';
   ],
   controllers: [BoothController],
   providers: [BoothService],
+  exports: [BoothService],
 })
 export class BoothModule {}

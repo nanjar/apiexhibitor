@@ -52,6 +52,7 @@ async function bootstrap() {
       .addTag('Chat', 'Chat list (2 tab: visitor/exhibitor), riwayat pesan, kirim pesan')
       .addTag('Agenda', 'Jadwal event - hari, track, session, pembicara (read-only)')
       .addTag('Notifications', 'Notification bell - list, unread count, tandai dibaca')
+      .addTag('Reports', 'Laporan - ringkasan lead & meeting, export XLSX')
       .build();
 
     const document = SwaggerModule.createDocument(app, config);
