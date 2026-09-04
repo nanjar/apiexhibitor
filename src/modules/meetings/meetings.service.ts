@@ -11,6 +11,7 @@ import { ExhibitorCompany } from '../exhibitors/entities/exhibitor-company.entit
 import { CurrentExhibitor } from '../../common/decorators/current-exhibitor.decorator';
 import { ApproveMeetingDto } from './dto/approve-meeting.dto';
 import { RejectMeetingDto } from './dto/reject-meeting.dto';
+import { RescheduleMeetingDto } from './dto/reschedule-meeting.dto';
 
 export type MeetingTabType = 'visitor' | 'exhibitor';
 
@@ -78,6 +79,56 @@ export class MeetingsService {
 
   async reject(user: CurrentExhibitor, meetingId: number, dto: RejectMeetingDto) {
     return this.applyDecision(user, meetingId, 'REJECT', dto.notes, null);
+  }
+
+  /**
+   * Reschedule - CUMA untuk meeting yang statusnya sudah APPROVED (AP).
+   * Ganti dari rencana awal PRD "Ajukan meeting baru" (exhibitor
+   * inisiasi meeting baru ke visitor) - diputuskan reschedule lebih pas,
+   * gak perlu alur create-meeting yang jauh lebih kompleks (pilih visitor,
+   * cek slot kosong, dst).
+   */
+  async reschedule(user: CurrentExhibitor, meetingId: number, dto: RescheduleMeetingDto) {
+    const meeting = await this.meetingRepo.findOne({
+      where: { eventsId: user.eventsId, id: meetingId },
+    });
+    if (!meeting) throw new NotFoundException('Meeting tidak ditemukan');
+
+    const belongsToUs = await this.belongsToCompany(user, meeting);
+    if (!belongsToUs) {
+      throw new BadRequestException('Meeting ini bukan untuk company kamu');
+    }
+    if (meeting.approvalStatus !== 'AP') {
+      throw new ConflictException(
+        'Reschedule cuma bisa untuk meeting yang sudah disetujui (approved)',
+      );
+    }
+
+    const newStart = new Date(dto.startDatetime);
+    const newEnd = new Date(dto.endDatetime);
+
+    meeting.startDatetime = newStart;
+    meeting.endDatetime = newEnd;
+    await this.meetingRepo.save(meeting);
+
+    await this.meetingActionRepo.save(
+      this.meetingActionRepo.create({
+        eventsId: user.eventsId,
+        meetingId,
+        action: 'RESCHEDULE',
+        actorExhibitorId: user.exhibitorId,
+        notes: dto.notes ?? null,
+        newStartDatetime: newStart,
+        newEndDatetime: newEnd,
+        createdAt: new Date(),
+      }),
+    );
+
+    return {
+      meetingId,
+      startDatetime: meeting.startDatetime,
+      endDatetime: meeting.endDatetime,
+    };
   }
 
   /**

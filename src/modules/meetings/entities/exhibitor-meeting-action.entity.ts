@@ -22,7 +22,7 @@ export class ExhibitorMeetingAction {
   meetingId: number;
 
   @Column({ name: 'action', type: 'varchar', length: 10 })
-  action: 'APPROVE' | 'REJECT';
+  action: 'APPROVE' | 'REJECT' | 'RESCHEDULE';
 
   @Column({ name: 'actor_exhibitor_id', type: 'int' })
   actorExhibitorId: number;
@@ -32,6 +32,12 @@ export class ExhibitorMeetingAction {
 
   @Column({ name: 'score', type: 'varchar', length: 50, nullable: true })
   score: string | null;
+
+  @Column({ name: 'new_start_datetime', type: 'timestamptz', nullable: true })
+  newStartDatetime: Date | null;
+
+  @Column({ name: 'new_end_datetime', type: 'timestamptz', nullable: true })
+  newEndDatetime: Date | null;
 
   @Column({ name: 'created_at', type: 'timestamptz' })
   createdAt: Date;

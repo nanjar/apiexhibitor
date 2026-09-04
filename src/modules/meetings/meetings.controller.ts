@@ -4,6 +4,7 @@ import { ApiBearerAuth, ApiQuery, ApiTags } from '@nestjs/swagger';
 import { MeetingsService, MeetingTabType } from './meetings.service';
 import { ApproveMeetingDto } from './dto/approve-meeting.dto';
 import { RejectMeetingDto } from './dto/reject-meeting.dto';
+import { RescheduleMeetingDto } from './dto/reschedule-meeting.dto';
 import { CurrentUser, CurrentExhibitor } from '../../common/decorators/current-exhibitor.decorator';
 
 @ApiTags('Meeting')
@@ -49,5 +50,15 @@ export class MeetingsController {
     @Body() dto: RejectMeetingDto,
   ) {
     return this.meetingsService.reject(user, meetingId, dto);
+  }
+
+  // Reschedule - cuma untuk meeting yang sudah approved.
+  @Post(':meetingId/reschedule')
+  reschedule(
+    @CurrentUser() user: CurrentExhibitor,
+    @Param('meetingId', ParseIntPipe) meetingId: number,
+    @Body() dto: RescheduleMeetingDto,
+  ) {
+    return this.meetingsService.reschedule(user, meetingId, dto);
   }
 }
