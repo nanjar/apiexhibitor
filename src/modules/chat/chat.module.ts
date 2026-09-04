@@ -9,7 +9,7 @@ import { ChatMessage } from './entities/chat-message.entity';
 import { GuestsTicket } from '../guests/entities/guests-ticket.entity';
 import { ExhibitorContact } from '../exhibitors/entities/exhibitor-contact.entity';
 import { ExhibitorCompany } from '../exhibitors/entities/exhibitor-company.entity';
-import { ExhibitorNotification } from '../notifications/entities/exhibitor-notification.entity';
+import { NotificationsModule } from '../notifications/notifications.module';
 import { ChatController } from './chat.controller';
 import { ChatService } from './chat.service';
 import { ChatGateway } from './gateway/chat.gateway';
@@ -23,7 +23,6 @@ import { ChatGateway } from './gateway/chat.gateway';
       GuestsTicket,
       ExhibitorContact,
       ExhibitorCompany,
-      ExhibitorNotification,
     ]),
     PassportModule,
     JwtModule.registerAsync({
@@ -33,6 +32,7 @@ import { ChatGateway } from './gateway/chat.gateway';
         secret: config.get<string>('JWT_ACCESS_SECRET'),
       }),
     }),
+    NotificationsModule,
   ],
   controllers: [ChatController],
   providers: [ChatService, ChatGateway],

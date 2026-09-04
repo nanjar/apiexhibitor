@@ -21,4 +21,8 @@ export const envValidationSchema = Joi.object({
   JWT_REFRESH_EXPIRES_IN: Joi.string().default('7d'),
 
   SWAGGER_ENABLED: Joi.string().valid('true', 'false').optional(),
+
+  // Fail-open by design (lihat FirebaseAdminService) - opsional, kalau
+  // kosong FCM nonaktif diam-diam, notification bell tetap jalan normal.
+  FIREBASE_SERVICE_ACCOUNT_PATH: Joi.string().optional(),
 });

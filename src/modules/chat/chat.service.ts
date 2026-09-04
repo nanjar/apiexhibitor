@@ -7,7 +7,7 @@ import { ChatMessage } from './entities/chat-message.entity';
 import { GuestsTicket } from '../guests/entities/guests-ticket.entity';
 import { ExhibitorContact } from '../exhibitors/entities/exhibitor-contact.entity';
 import { ExhibitorCompany } from '../exhibitors/entities/exhibitor-company.entity';
-import { ExhibitorNotification } from '../notifications/entities/exhibitor-notification.entity';
+import { NotificationsService } from '../notifications/notifications.service';
 import { CurrentExhibitor } from '../../common/decorators/current-exhibitor.decorator';
 
 export type ChatTabType = 'visitor' | 'exhibitor';
@@ -44,8 +44,7 @@ export class ChatService {
     private readonly contactRepo: Repository<ExhibitorContact>,
     @InjectRepository(ExhibitorCompany)
     private readonly companyRepo: Repository<ExhibitorCompany>,
-    @InjectRepository(ExhibitorNotification)
-    private readonly notificationRepo: Repository<ExhibitorNotification>,
+    private readonly notificationsService: NotificationsService,
   ) {}
 
   async listRooms(user: CurrentExhibitor, type: ChatTabType) {
@@ -154,25 +153,16 @@ export class ChatService {
       );
       await Promise.all(
         recipients.map((r) =>
-          this.notificationRepo.save(
-            this.notificationRepo.create({
-              eventsId: user.eventsId,
-              exhibitorId: r.guestsId,
-              type: 'CHAT_MESSAGE',
-              title: user.fullname,
-              body: text.length > 200 ? text.slice(0, 200) + '…' : text,
-              data: { chatId },
-              isRead: false,
-              createdAt: new Date(),
-            }),
+          this.notificationsService.createAndPush(
+            user.eventsId,
+            r.guestsId,
+            'CHAT_MESSAGE',
+            user.fullname,
+            text.length > 200 ? text.slice(0, 200) + '…' : text,
+            { chatId },
           ),
         ),
       );
-
-      // TODO: push notification (FCM) - sengaja belum diimplementasi,
-      // Chat dibangun dulu tanpa notifikasi push (keputusan Sept 2026).
-      // Device token exhibitor sudah tercatat di exhibitor_device_token
-      // sejak login, tinggal sambungkan begitu FCM diaktifkan.
 
       return message;
     });
