@@ -1,5 +1,5 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { IsNotEmpty, IsOptional, IsString, MaxLength } from 'class-validator';
+import { IsEmail, IsNotEmpty, IsOptional, IsString, MaxLength } from 'class-validator';
 
 /**
  * Selalu bikin akun user_level='OPR' - permission-nya FIXED (cuma scan QR,
@@ -18,6 +18,11 @@ export class CreateMemberDto {
   @IsNotEmpty()
   @MaxLength(30)
   phone: string;
+
+  @ApiProperty()
+  @IsEmail()
+  @MaxLength(255)
+  email: string;
 
   @ApiPropertyOptional({ default: '62' })
   @IsOptional()

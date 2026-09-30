@@ -76,6 +76,7 @@ export class MembersService {
         exhibitorId: contact.id,
         fullname: contact.fullname,
         phone: contact.phone,
+        email: contact.exhibitorEmail,
         jobTitle: contact.jobTitle,
         userLevel: contact.userLevel,
         // NOT_INVITED = terdaftar di exhibitor_have_company (boleh akses
@@ -103,6 +104,7 @@ export class MembersService {
       exhibitorId: null,
       fullname: p.fullname,
       phone: p.phone,
+      email: p.exhibitorEmail,
       jobTitle: p.jobTitle,
       userLevel: p.userLevel,
       memberStatus: 'INVITED' as const,
@@ -214,6 +216,7 @@ export class MembersService {
       countryCode: dto.countryCode ?? '62',
       phone: dto.phone,
       jobTitle: dto.jobTitle ?? null,
+      exhibitorEmail: dto.email,
       userLevel: 'OPR',
       createdAt: now,
     });
@@ -224,6 +227,7 @@ export class MembersService {
       actionId: action.id,
       fullname: dto.fullname,
       phone: dto.phone,
+      email: dto.email,
       userLevel: 'OPR',
       memberStatus: 'INVITED',
       canScan: true,

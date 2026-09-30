@@ -52,6 +52,9 @@ export class ExhibitorMemberAction {
   @Column({ name: 'user_level', type: 'varchar', length: 10, nullable: true })
   userLevel: string | null;
 
+  @Column({ name: 'exhibitor_email', type: 'varchar', length: 255, nullable: true })
+  exhibitorEmail: string | null;
+
   @Column({ name: 'created_at', type: 'timestamptz' })
   createdAt: Date;
 
