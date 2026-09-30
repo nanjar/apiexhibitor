@@ -39,4 +39,14 @@ export class ExhibitorContact {
 
   @Column({ name: 'exhibitor_email', type: 'varchar', length: 255, nullable: true })
   exhibitorEmail: string;
+
+  // Kolom ini sudah ada di Postgres & sudah masuk pull-sync columns list
+  // (sync-tables.config.ts) sejak awal, cuma belum dipetakan di entity ini.
+  // Dipakai MembersService buat correlationKey (pending vs confirmed) untuk
+  // fitur "tambah member baru" (Sept 2026).
+  @Column({ name: 'created_date', type: 'timestamptz', nullable: true })
+  created: Date | null;
+
+  @Column({ name: 'last_update', type: 'timestamptz', nullable: true })
+  lastUpdate: Date | null;
 }

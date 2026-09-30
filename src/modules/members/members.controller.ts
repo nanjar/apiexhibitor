@@ -4,6 +4,7 @@ import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { MembersService } from './members.service';
 import { InviteMemberDto } from './dto/invite-member.dto';
 import { UpdatePermissionDto } from './dto/update-permission.dto';
+import { CreateMemberDto } from './dto/create-member.dto';
 import { CurrentUser, CurrentExhibitor } from '../../common/decorators/current-exhibitor.decorator';
 import { OwnerGuard } from '../../common/guards/owner.guard';
 
@@ -25,6 +26,14 @@ export class MembersController {
   @UseGuards(OwnerGuard)
   invite(@CurrentUser() user: CurrentExhibitor, @Body() dto: InviteMemberDto) {
     return this.membersService.invite(user, dto);
+  }
+
+  // Tambah orang BARU (belum pernah terdaftar di exhibitor_contact) -
+  // beda dari invite() yang cuma bisa undang exhibitor yang sudah ada.
+  @Post()
+  @UseGuards(OwnerGuard)
+  create(@CurrentUser() user: CurrentExhibitor, @Body() dto: CreateMemberDto) {
+    return this.membersService.createNewMember(user, dto);
   }
 
   @Post(':exhibitorId/remove')

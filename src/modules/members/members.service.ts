@@ -13,6 +13,7 @@ import { ExhibitorMemberAction } from '../exhibitors/entities/exhibitor-member-a
 import { CurrentExhibitor } from '../../common/decorators/current-exhibitor.decorator';
 import { InviteMemberDto } from './dto/invite-member.dto';
 import { UpdatePermissionDto } from './dto/update-permission.dto';
+import { CreateMemberDto } from './dto/create-member.dto';
 
 /**
  * Keanggotaan (exhibitor_member_status_sync) itu scope-nya per COMPANY,
@@ -42,25 +43,36 @@ export class MembersService {
     const links = await this.haveCompanyRepo.find({
       where: { eventsId: user.eventsId, companyId: user.companyId },
     });
-    if (links.length === 0) return [];
 
     const exhibitorIds = links.map((l) => l.exhibitorId);
-    const [contacts, members] = await Promise.all([
-      this.contactRepo
-        .createQueryBuilder('c')
-        .where('c.eventsId = :eventsId', { eventsId: user.eventsId })
-        .andWhere('c.id IN (:...ids)', { ids: exhibitorIds })
-        .getMany(),
-      this.memberRepo
-        .createQueryBuilder('m')
-        .where('m.eventsId = :eventsId', { eventsId: user.eventsId })
-        .andWhere('m.exhibitorId IN (:...ids)', { ids: exhibitorIds })
-        .getMany(),
+    const [contacts, members, pendingCreates] = await Promise.all([
+      exhibitorIds.length
+        ? this.contactRepo
+            .createQueryBuilder('c')
+            .where('c.eventsId = :eventsId', { eventsId: user.eventsId })
+            .andWhere('c.id IN (:...ids)', { ids: exhibitorIds })
+            .getMany()
+        : Promise.resolve([]),
+      exhibitorIds.length
+        ? this.memberRepo
+            .createQueryBuilder('m')
+            .where('m.eventsId = :eventsId', { eventsId: user.eventsId })
+            .andWhere('m.exhibitorId IN (:...ids)', { ids: exhibitorIds })
+            .getMany()
+        : Promise.resolve([]),
+      // Orang baru yang di-create tapi belum pulang lewat pull-sync -
+      // exhibitor_have_company-nya belum ada, jadi gak akan kejaring lewat
+      // links di atas. Ditampilkan terpisah sebagai "pending".
+      this.memberActionRepo.find({
+        where: { eventsId: user.eventsId, companyId: user.companyId, action: 'CREATE' },
+        order: { createdAt: 'DESC' },
+      }),
     ]);
 
-    return contacts.map((contact) => {
+    const confirmed = contacts.map((contact) => {
       const member = members.find((m) => m.exhibitorId === contact.id);
       return {
+        pending: false,
         exhibitorId: contact.id,
         fullname: contact.fullname,
         phone: contact.phone,
@@ -75,6 +87,31 @@ export class MembersService {
         canChat: member?.canChat === 'Y',
       };
     });
+
+    // Match pending ke confirmed by createdAt (presisi detik, sama seperti
+    // correlationKey di BoothService) supaya orang yang barusan di-create
+    // gak dobel muncul begitu pull-sync selesai membawanya balik.
+    const confirmedContactCreatedSeconds = new Set(
+      contacts.filter((c) => c.created).map((c) => Math.floor(new Date(c.created!).getTime() / 1000)),
+    );
+    const pendingOnly = pendingCreates.filter(
+      (p) => !confirmedContactCreatedSeconds.has(Math.floor(new Date(p.createdAt).getTime() / 1000)),
+    );
+
+    const pendingItems = pendingOnly.map((p) => ({
+      pending: true,
+      exhibitorId: null,
+      fullname: p.fullname,
+      phone: p.phone,
+      jobTitle: p.jobTitle,
+      userLevel: p.userLevel,
+      memberStatus: 'INVITED' as const,
+      isOwner: false,
+      canScan: p.canScan === 'Y',
+      canChat: p.canChat === 'Y',
+    }));
+
+    return [...pendingItems, ...confirmed];
   }
 
   async invite(user: CurrentExhibitor, dto: InviteMemberDto) {
@@ -138,6 +175,48 @@ export class MembersService {
     );
 
     return { exhibitorId: dto.exhibitorId, memberStatus: 'INVITED', canScan, canChat };
+  }
+
+  /**
+   * Tambah orang BARU yang belum pernah terdaftar di exhibitor_contact
+   * sama sekali (beda dari invite() yang butuh row exhibitor_contact +
+   * exhibitor_have_company yang sudah ada duluan). id-nya (auto-increment
+   * MySQL) belum diketahui di sini - baru ke-assign saat push-job jalan,
+   * lalu balik lagi ke Postgres lewat pull-sync (≤6 menit total: push
+   * ≤1 menit + pull 5 menit). Selama itu, tampil sebagai "pending" di
+   * listMembers() (lihat correlationKey di sana).
+   */
+  async createNewMember(user: CurrentExhibitor, dto: CreateMemberDto) {
+    const canScan = dto.canScan ?? true;
+    const canChat = dto.canChat ?? true;
+    const now = new Date();
+
+    const action = this.memberActionRepo.create({
+      eventsId: user.eventsId,
+      companyId: user.companyId,
+      exhibitorId: null,
+      action: 'CREATE',
+      actorExhibitorId: user.exhibitorId,
+      canScan: canScan ? 'Y' : 'N',
+      canChat: canChat ? 'Y' : 'N',
+      fullname: dto.fullname,
+      countryCode: dto.countryCode ?? '62',
+      phone: dto.phone,
+      jobTitle: dto.jobTitle ?? null,
+      userLevel: 'STAFF',
+      createdAt: now,
+    });
+    await this.memberActionRepo.save(action);
+
+    return {
+      pending: true,
+      actionId: action.id,
+      fullname: dto.fullname,
+      phone: dto.phone,
+      memberStatus: 'INVITED',
+      canScan,
+      canChat,
+    };
   }
 
   async remove(user: CurrentExhibitor, exhibitorId: number) {
