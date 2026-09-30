@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { ILike, Repository } from 'typeorm';
+import { Repository } from 'typeorm';
 import { GuestsTicket } from '../guests/entities/guests-ticket.entity';
 import { ExhibitorLeadSync } from '../booth/entities/exhibitor-lead-sync.entity';
 import { ExhibitorLeadAction } from '../booth/entities/exhibitor-lead-action.entity';
@@ -10,9 +10,15 @@ const DEFAULT_LIMIT = 20;
 const MAX_LIMIT = 100;
 
 /**
- * Visitor List = directory/browse SEMUA visitor terdaftar di event ini
- * (guests_ticket), BUKAN cuma yang sudah jadi lead booth ini. Dipakai
- * exhibitor buat cari calon lead sebelum scan.
+ * Visitor List = directory/browse visitor yang SUDAH TERDAFTAR di
+ * bizmatch app (EXISTS di bizmatch_guestsv2), BUKAN semua pemegang tiket
+ * event (guests_ticket) dan BUKAN cuma yang sudah jadi lead booth ini.
+ * Dipakai exhibitor buat cari calon lead sebelum scan.
+ *
+ * bizmatch_guestsv2 bisa punya beberapa baris per guest (per
+ * member_guests_id - akun rombongan), jadi dedup pakai EXISTS subquery,
+ * bukan JOIN, supaya guests_ticket tidak ke-duplikasi di hasil. apps_type
+ * ('apps'/'web') murni info asal join, tidak dipakai sebagai filter.
  *
  * "alreadyLead" dihitung dengan scoping SAMA PERSIS seperti
  * BoothService.listLeads() (eventsId+companyId+venueId+spaceId), gabungan
@@ -38,19 +44,27 @@ export class VisitorsService {
       Math.max(1, parseInt(limit ?? String(DEFAULT_LIMIT), 10) || DEFAULT_LIMIT),
     );
 
-    const where = search
-      ? [
-          { eventsId: user.eventsId, fullname: ILike(`%${search}%`) },
-          { eventsId: user.eventsId, companyName: ILike(`%${search}%`) },
-        ]
-      : { eventsId: user.eventsId };
+    const qb = this.guestsRepo
+      .createQueryBuilder('g')
+      .where('g.eventsId = :eventsId', { eventsId: user.eventsId })
+      .andWhere(
+        `EXISTS (
+          SELECT 1 FROM bizmatch_guestsv2 b
+          WHERE b.events_id = g.events_id AND b.guests_id = g.guests_id
+        )`,
+      );
 
-    const [visitors, total] = await this.guestsRepo.findAndCount({
-      where,
-      order: { fullname: 'ASC' },
-      skip: (pageNum - 1) * limitNum,
-      take: limitNum,
-    });
+    if (search) {
+      qb.andWhere('(g.fullname ILIKE :search OR g.companyName ILIKE :search)', {
+        search: `%${search}%`,
+      });
+    }
+
+    const [visitors, total] = await qb
+      .orderBy('g.fullname', 'ASC')
+      .skip((pageNum - 1) * limitNum)
+      .take(limitNum)
+      .getManyAndCount();
 
     const leadGuestIds = await this.alreadyLeadGuestIds(user);
 
