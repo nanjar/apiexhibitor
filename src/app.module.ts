@@ -14,6 +14,7 @@ import { AgendaModule } from './modules/agenda/agenda.module';
 import { NotificationsModule } from './modules/notifications/notifications.module';
 import { ReportsModule } from './modules/reports/reports.module';
 import { VisitorsModule } from './modules/visitors/visitors.module';
+import { CompaniesModule } from './modules/companies/companies.module';
 
 @Module({
   imports: [
@@ -38,6 +39,7 @@ import { VisitorsModule } from './modules/visitors/visitors.module';
     NotificationsModule,
     ReportsModule,
     VisitorsModule,
+    CompaniesModule,
   ],
 })
 export class AppModule {}
