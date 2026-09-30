@@ -24,11 +24,11 @@ export class CreateMemberDto {
   @MaxLength(255)
   email: string;
 
-  @ApiPropertyOptional({ default: '62' })
-  @IsOptional()
+  @ApiProperty({ description: 'Kode negara, mis. "62"' })
   @IsString()
+  @IsNotEmpty()
   @MaxLength(10)
-  countryCode?: string;
+  countryCode: string;
 
   @ApiPropertyOptional()
   @IsOptional()

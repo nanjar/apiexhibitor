@@ -213,7 +213,7 @@ export class MembersService {
       canScan: 'Y',
       canChat: 'N',
       fullname: dto.fullname,
-      countryCode: dto.countryCode ?? '62',
+      countryCode: dto.countryCode,
       phone: dto.phone,
       jobTitle: dto.jobTitle ?? null,
       exhibitorEmail: dto.email,
