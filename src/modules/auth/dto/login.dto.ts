@@ -7,7 +7,20 @@ export class LoginDto {
   @IsNotEmpty()
   eventKey: string;
 
-  @ApiProperty({ description: 'Nomor HP terdaftar sebagai staff booth', example: '081234567890' })
+  @ApiProperty({
+    description:
+      'Kode negara nomor HP, mis. "62" - WAJIB dikirim terpisah dari phone. exhibitor_contact menyimpan country_code & phone di kolom berbeda, jadi tanpa ini pencarian bisa gagal match walau nomornya benar terdaftar.',
+    example: '62',
+  })
+  @IsString()
+  @IsNotEmpty()
+  @Length(1, 10)
+  countryCode: string;
+
+  @ApiProperty({
+    description: 'Nomor HP terdaftar sebagai staff booth, TANPA kode negara (mis. "81234567890" atau "081234567890")',
+    example: '81234567890',
+  })
   @IsString()
   @Length(8, 20)
   phone: string;

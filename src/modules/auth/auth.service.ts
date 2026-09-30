@@ -75,8 +75,7 @@ export class AuthService {
       throw new UnauthorizedException('Event key tidak valid');
     }
 
-    const normalizedPhone = this.normalizePhone(dto.phone);
-    const contact = await this.findContactByPhone(event.id, normalizedPhone);
+    const contact = await this.findContactByPhone(event.id, dto.countryCode, dto.phone);
     if (!contact) {
       throw new UnauthorizedException('Nomor HP tidak terdaftar sebagai staff booth di event ini');
     }
@@ -275,35 +274,53 @@ export class AuthService {
     });
   }
 
+  /**
+   * FIX (Sept 2026): exhibitor_contact simpan country_code & phone di
+   * KOLOM TERPISAH (bukan digabung), jadi heuristik lama yang cuma coba
+   * nambah/buang prefix "62"/"0"/"+" di SATU kolom `phone` gagal cocok
+   * kalau phone di DB memang polos tanpa kode negara (kasus nyata:
+   * login ditolak "tidak terdaftar" padahal datanya ada). Sekarang
+   * countryCode WAJIB dikirim terpisah & dicocokkan ke kolom
+   * country_code sendiri.
+   *
+   * country_code/phone di DB dinormalisasi via regexp_replace (buang
+   * semua non-digit) supaya format "+62"/"62"/"0" dkk tetap match tanpa
+   * peduli gimana persisnya data legacy itu diketik. country_code NULL
+   * di DB tetap dianggap match (data lama yang belum pernah diisi) -
+   * jangan sampai nolak akun yang sebelumnya bisa login.
+   */
   private async findContactByPhone(
     eventsId: number,
-    normalizedPhone: string,
+    countryCodeInput: string,
+    phoneInput: string,
   ): Promise<ExhibitorContact | null> {
-    const candidates = this.phoneVariants(normalizedPhone);
-    for (const candidate of candidates) {
-      const found = await this.contactRepo.findOne({
-        where: { eventsId, phone: candidate },
-      });
-      if (found) return found;
+    const ccDigits = this.digitsOnly(countryCodeInput);
+    let localDigits = this.digitsOnly(phoneInput);
+    // Jaga-jaga kalau phone dikirim MASIH termasuk kode negaranya (mis.
+    // countryCode="62" & phone="62811818544") - potong duplikasinya.
+    if (ccDigits && localDigits.startsWith(ccDigits) && localDigits.length > ccDigits.length) {
+      localDigits = localDigits.slice(ccDigits.length);
     }
-    return null;
+    if (localDigits.startsWith('0')) {
+      localDigits = localDigits.slice(1);
+    }
+    const phoneCandidates = [...new Set([localDigits, '0' + localDigits])];
+
+    return this.contactRepo
+      .createQueryBuilder('c')
+      .where('c.eventsId = :eventsId', { eventsId })
+      .andWhere(
+        `(c.countryCode IS NULL OR regexp_replace(c.countryCode, '[^0-9]', '', 'g') = :cc)`,
+        { cc: ccDigits },
+      )
+      .andWhere(`regexp_replace(c.phone, '[^0-9]', '', 'g') IN (:...phones)`, {
+        phones: phoneCandidates,
+      })
+      .getOne();
   }
 
-  private normalizePhone(phone: string): string {
-    return phone.replace(/[^0-9]/g, '');
-  }
-
-  private phoneVariants(digitsOnly: string): string[] {
-    const variants = new Set<string>([digitsOnly]);
-    if (digitsOnly.startsWith('0')) {
-      variants.add('62' + digitsOnly.slice(1));
-      variants.add('+62' + digitsOnly.slice(1));
-    }
-    if (digitsOnly.startsWith('62')) {
-      variants.add('0' + digitsOnly.slice(2));
-      variants.add('+' + digitsOnly);
-    }
-    return Array.from(variants);
+  private digitsOnly(value: string): string {
+    return value.replace(/[^0-9]/g, '');
   }
 
   private async resolveMembership(
