@@ -6,6 +6,8 @@ import { ExhcompanySpace } from '../venue/entities/exhcompany-space.entity';
 import { VenueSpace } from '../venue/entities/venue-space.entity';
 import { CheckinBooth } from '../booth/entities/checkin-booth.entity';
 import { MeetingsService } from '../meetings/meetings.service';
+import { BoothService } from '../booth/booth.service';
+import { ChatService } from '../chat/chat.service';
 import { CurrentExhibitor } from '../../common/decorators/current-exhibitor.decorator';
 
 /**
@@ -19,10 +21,12 @@ import { CurrentExhibitor } from '../../common/decorators/current-exhibitor.deco
  *
  * Field yang SENGAJA belum diisi (per keputusan Sept 2026, nunggu
  * keputusan lanjutan):
- * - summary.hotLeadsCount: butuh tabel temperature lead (exhibitor_lead)
  * - booth.eventDayProgress & operatingHoursLabel: events entity belum
  *   punya kolom tanggal/jam operasional yang cukup
- * - summary.unreadChatCount: Chat module belum dibangun
+ *
+ * summary.hotLeadsCount (BoothService.countHotLeads) & summary.unreadChatCount
+ * (ChatService.getUnreadCount) ditambahkan Sept 2026 - reuse logic yang
+ * sama persis dengan tab My Booth & Chat supaya angkanya selalu konsisten.
  */
 @Injectable()
 export class HomeService {
@@ -36,16 +40,21 @@ export class HomeService {
     @InjectRepository(CheckinBooth)
     private readonly checkinRepo: Repository<CheckinBooth>,
     private readonly meetingsService: MeetingsService,
+    private readonly boothService: BoothService,
+    private readonly chatService: ChatService,
   ) {}
 
   async getHome(user: CurrentExhibitor) {
-    const [booth, leadsToday, leadsTotal, visitorMeetings, exhibitorMeetings] = await Promise.all([
-      this.getBoothProfile(user),
-      this.getLeadsCount(user, true),
-      this.getLeadsCount(user, false),
-      this.meetingsService.list(user, 'visitor'),
-      this.meetingsService.list(user, 'exhibitor'),
-    ]);
+    const [booth, leadsToday, leadsTotal, visitorMeetings, exhibitorMeetings, hotLeadsCount, unreadChatCount] =
+      await Promise.all([
+        this.getBoothProfile(user),
+        this.getLeadsCount(user, true),
+        this.getLeadsCount(user, false),
+        this.meetingsService.list(user, 'visitor'),
+        this.meetingsService.list(user, 'exhibitor'),
+        this.boothService.countHotLeads(user),
+        this.chatService.getUnreadCount(user),
+      ]);
 
     const allMeetings = [...visitorMeetings, ...exhibitorMeetings];
     const pendingMeetings = allMeetings
@@ -65,10 +74,10 @@ export class HomeService {
       summary: {
         leadsToday,
         leadsTotal,
-        hotLeadsCount: null, // TODO: butuh exhibitor_lead (temperature)
+        hotLeadsCount,
         totalMeetings: allMeetings.length,
         pendingMeetingsCount: pendingMeetings.length,
-        unreadChatCount: null, // TODO: butuh Chat module
+        unreadChatCount,
       },
       // Setiap item punya counterpart.type ('visitor'/'exhibitor') supaya
       // UI tahu mau di-route ke tab mana kalau di-tap.

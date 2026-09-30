@@ -7,6 +7,7 @@ import { GuestsTicket } from '../guests/entities/guests-ticket.entity';
 import { MeetingMemberV2 } from '../meetings/entities/meeting-member-v2.entity';
 import { EventsMeetingV2 } from '../meetings/entities/events-meeting-v2.entity';
 import { ExhibitorHaveCompany } from '../exhibitors/entities/exhibitor-have-company.entity';
+import { ExhibitorProduct } from '../reports/entities/exhibitor-product.entity';
 import { BoothController } from './booth.controller';
 import { BoothService } from './booth.service';
 
@@ -19,6 +20,7 @@ import { BoothService } from './booth.service';
       MeetingMemberV2,
       EventsMeetingV2,
       ExhibitorHaveCompany,
+      ExhibitorProduct,
     ]),
     PassportModule,
   ],

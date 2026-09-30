@@ -7,6 +7,7 @@ import { GuestsTicket } from '../guests/entities/guests-ticket.entity';
 import { MeetingMemberV2 } from '../meetings/entities/meeting-member-v2.entity';
 import { EventsMeetingV2 } from '../meetings/entities/events-meeting-v2.entity';
 import { ExhibitorHaveCompany } from '../exhibitors/entities/exhibitor-have-company.entity';
+import { ExhibitorProduct } from '../reports/entities/exhibitor-product.entity';
 import { CurrentExhibitor } from '../../common/decorators/current-exhibitor.decorator';
 import { ScanLeadDto } from './dto/scan-lead.dto';
 import { ManualLeadDto } from './dto/manual-lead.dto';
@@ -44,7 +45,23 @@ export class BoothService {
     private readonly meetingMemberRepo: Repository<MeetingMemberV2>,
     @InjectRepository(ExhibitorHaveCompany)
     private readonly haveCompanyRepo: Repository<ExhibitorHaveCompany>,
+    @InjectRepository(ExhibitorProduct)
+    private readonly productRepo: Repository<ExhibitorProduct>,
   ) {}
+
+  // "12,15,20" -> [12,15,20]. String kosong/null -> [].
+  private parseProductInterestIds(raw: string | null): number[] {
+    if (!raw) return [];
+    return raw
+      .split(',')
+      .map((s) => parseInt(s.trim(), 10))
+      .filter((n) => !isNaN(n));
+  }
+
+  private joinProductInterestIds(ids: number[] | undefined): string | null {
+    if (!ids || ids.length === 0) return null;
+    return [...new Set(ids)].join(',');
+  }
 
   async scan(user: CurrentExhibitor, dto: ScanLeadDto) {
     const guest = await this.guestsRepo.findOne({
@@ -62,6 +79,7 @@ export class BoothService {
       actorExhibitorId: user.exhibitorId,
       guestsId: guest.guestsId,
       source: dto.source,
+      productInterestIds: this.joinProductInterestIds(dto.productInterestIds),
       action: 'CREATE',
       createdAt: new Date(),
     });
@@ -71,6 +89,7 @@ export class BoothService {
       pending: true,
       actionId: action.id,
       source: dto.source,
+      productInterestIds: dto.productInterestIds ?? [],
       // Detail visitor - ditampilkan ke exhibitor setelah scan, sebelum
       // dia lanjut isi notes (opsional, lewat endpoint terpisah).
       visitor: {
@@ -97,11 +116,17 @@ export class BoothService {
       manualPhone: dto.phone ?? null,
       manualCompany: dto.company ?? null,
       notes: dto.notes ?? null,
+      productInterestIds: this.joinProductInterestIds(dto.productInterestIds),
       action: 'CREATE',
       createdAt: new Date(),
     });
     await this.leadActionRepo.save(action);
-    return { pending: true, actionId: action.id, source: 'MANUAL' };
+    return {
+      pending: true,
+      actionId: action.id,
+      source: 'MANUAL',
+      productInterestIds: dto.productInterestIds ?? [],
+    };
   }
 
   /**
@@ -126,6 +151,13 @@ export class BoothService {
       );
     }
 
+    // productInterestIds tidak dikirim (undefined) -> tidak diubah, tetap
+    // pakai nilai lead yang sudah ada (replace, bukan merge/append).
+    const nextProductInterest =
+      dto.productInterestIds !== undefined
+        ? this.joinProductInterestIds(dto.productInterestIds)
+        : lead.productInterestIds;
+
     const action = this.leadActionRepo.create({
       eventsId: user.eventsId,
       companyId: user.companyId,
@@ -135,17 +167,23 @@ export class BoothService {
       action: 'UPDATE_NOTES',
       leadId,
       notes: dto.notes,
+      productInterestIds: nextProductInterest,
       createdAt: new Date(),
     });
     await this.leadActionRepo.save(action);
 
     // Optimistic - tulis langsung ke mirror supaya UI langsung reflect.
-    // Aman: notes yang ditulis SAMA PERSIS dengan yang bakal ditulis
-    // push-job ke MySQL.
+    // Aman: notes/productInterestIds yang ditulis SAMA PERSIS dengan yang
+    // bakal ditulis push-job ke MySQL.
     lead.notes = dto.notes;
+    lead.productInterestIds = nextProductInterest;
     await this.leadSyncRepo.save(lead);
 
-    return { leadId, notes: dto.notes };
+    return {
+      leadId,
+      notes: dto.notes,
+      productInterestIds: this.parseProductInterestIds(nextProductInterest),
+    };
   }
 
   async listLeads(
@@ -237,12 +275,28 @@ export class BoothService {
         : Promise.resolve(new Map<number, string | null>()),
     ]);
 
+    // Nama produk - resolve sekali untuk semua id minat produk yang muncul,
+    // supaya UI tidak perlu request terpisah ke Product Catalog.
+    const allProductIds = [...new Set(items.flatMap((i) => i.productInterestIds))];
+    const products = allProductIds.length
+      ? await this.productRepo
+          .createQueryBuilder('p')
+          .where('p.eventsId = :eventsId', { eventsId: user.eventsId })
+          .andWhere('p.companyId = :companyId', { companyId: user.companyId })
+          .andWhere('p.id IN (:...ids)', { ids: allProductIds })
+          .getMany()
+      : [];
+
     let result = items.map((i) => {
       const guest = i.guestsId ? guests.find((g) => g.guestsId === i.guestsId) : null;
       return {
         ...i,
         fullname: i.guestsId ? guest?.fullname ?? null : i.manualFullname,
         temperature: i.guestsId ? temperatureMap.get(i.guestsId) ?? null : null,
+        productInterest: i.productInterestIds.map((id) => ({
+          id,
+          productName: products.find((p) => p.id === id)?.productName ?? null,
+        })),
       };
     });
 
@@ -251,6 +305,16 @@ export class BoothService {
     }
 
     return { sourceCounts, leads: result };
+  }
+
+  /**
+   * Dipakai HomeService untuk summary.hotLeadsCount - reuse listLeads()
+   * (termasuk logic pending/confirmed + temperature) supaya angka yang
+   * ditampilkan di Home selalu konsisten dengan tab My Booth.
+   */
+  async countHotLeads(user: CurrentExhibitor): Promise<number> {
+    const { leads } = await this.listLeads(user);
+    return leads.filter((l) => l.temperature === 'Hot').length;
   }
 
   private toLeadItem(row: ExhibitorLeadSync | ExhibitorLeadAction, pending: boolean) {
@@ -263,6 +327,7 @@ export class BoothService {
       manualPhone: row.manualPhone,
       manualCompany: row.manualCompany,
       notes: row.notes,
+      productInterestIds: this.parseProductInterestIds(row.productInterestIds),
       createdAt: row.createdAt,
     };
   }

@@ -1,5 +1,5 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { IsNotEmpty, IsOptional, IsString, MaxLength } from 'class-validator';
+import { IsArray, IsInt, IsNotEmpty, IsOptional, IsString, MaxLength } from 'class-validator';
 
 export class ManualLeadDto {
   @ApiProperty({ description: 'Bebas ketik - belum tentu visitor terdaftar' })
@@ -25,4 +25,13 @@ export class ManualLeadDto {
   @IsString()
   @MaxLength(500)
   notes?: string;
+
+  @ApiPropertyOptional({
+    description: 'Minat produk - list exhibitor_product.id milik company ini',
+    type: [Number],
+  })
+  @IsOptional()
+  @IsArray()
+  @IsInt({ each: true })
+  productInterestIds?: number[];
 }

@@ -47,7 +47,7 @@ export class ChatService {
     private readonly notificationsService: NotificationsService,
   ) {}
 
-  async listRooms(user: CurrentExhibitor, type: ChatTabType) {
+  async listRooms(user: CurrentExhibitor, type: ChatTabType, search?: string) {
     const directions = type === 'visitor' ? ['E2V', 'V2E'] : ['E2E'];
 
     const memberships = await this.chatMemberRepo.find({
@@ -71,7 +71,7 @@ export class ChatService {
 
     const counterparts = await this.resolveCounterparts(user, roomChatIds, type);
 
-    return rooms.map((room) => ({
+    let result = rooms.map((room) => ({
       chatId: room.chatId,
       lastSender: room.lastSender,
       lastMessage: room.lastMessage,
@@ -80,6 +80,37 @@ export class ChatService {
       comDirection: room.comDirection,
       counterpart: counterparts.get(room.chatId) ?? { fullname: null, companyName: null },
     }));
+
+    // Search - cocokkan nama/company lawan bicara, case-insensitive
+    // contains. Difilter di aplikasi (bukan SQL) karena counterpart baru
+    // di-resolve sesudah query rooms (butuh join beberapa tabel berbeda
+    // tergantung tab visitor/exhibitor).
+    const q = search?.trim().toLowerCase();
+    if (q) {
+      result = result.filter(
+        (r) =>
+          r.counterpart.fullname?.toLowerCase().includes(q) ||
+          r.counterpart.companyName?.toLowerCase().includes(q),
+      );
+    }
+
+    return result;
+  }
+
+  /**
+   * Dipakai HomeService untuk summary.unreadChatCount - jumlah unread dari
+   * SEMUA chat room company ini (gabungan tab visitor + exhibitor), sumber
+   * yang sama dengan listRooms() (kolom event_chatmember_v2.unread).
+   */
+  async getUnreadCount(user: CurrentExhibitor): Promise<number> {
+    const result = await this.chatMemberRepo
+      .createQueryBuilder('m')
+      .select('COALESCE(SUM(m.unread), 0)', 'total')
+      .where('m.eventsId = :eventsId', { eventsId: user.eventsId })
+      .andWhere('m.usertypeId = :usertypeId', { usertypeId: 'EX' })
+      .andWhere('m.companyId = :companyId', { companyId: user.companyId })
+      .getRawOne<{ total: string }>();
+    return parseInt(result?.total ?? '0', 10);
   }
 
   async getMessages(user: CurrentExhibitor, chatId: number) {

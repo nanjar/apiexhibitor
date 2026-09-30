@@ -40,6 +40,11 @@ export class ExhibitorLeadSync {
   @Column({ name: 'notes', type: 'text', nullable: true })
   notes: string | null;
 
+  // Comma-separated exhibitor_product.id, mis. "12,15,20" - lihat
+  // BoothService.parseProductInterestIds() / joinProductInterestIds().
+  @Column({ name: 'product_interest_ids', type: 'varchar', length: 255, nullable: true })
+  productInterestIds: string | null;
+
   @Column({ name: 'created_at', type: 'timestamptz' })
   createdAt: Date;
 

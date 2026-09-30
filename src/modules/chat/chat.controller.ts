@@ -13,11 +13,16 @@ export class ChatController {
   constructor(private readonly chatService: ChatService) {}
 
   // Dua tab: 'visitor' (E2V/V2E) dan 'exhibitor' (E2E) - sama polanya
-  // dengan Meeting.
+  // dengan Meeting. search opsional - filter by nama/company lawan bicara.
   @Get('rooms')
   @ApiQuery({ name: 'type', enum: ['visitor', 'exhibitor'], required: true })
-  listRooms(@CurrentUser() user: CurrentExhibitor, @Query('type') type: ChatTabType) {
-    return this.chatService.listRooms(user, type);
+  @ApiQuery({ name: 'search', required: false, description: 'Cari nama visitor/exhibitor atau nama company lawan bicara' })
+  listRooms(
+    @CurrentUser() user: CurrentExhibitor,
+    @Query('type') type: ChatTabType,
+    @Query('search') search?: string,
+  ) {
+    return this.chatService.listRooms(user, type, search);
   }
 
   @Get('rooms/:chatId/messages')

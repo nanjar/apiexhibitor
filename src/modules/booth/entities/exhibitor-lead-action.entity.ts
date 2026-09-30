@@ -40,6 +40,12 @@ export class ExhibitorLeadAction {
   @Column({ name: 'notes', type: 'text', nullable: true })
   notes: string | null;
 
+  @Column({ name: 'product_interest_ids', type: 'varchar', length: 255, nullable: true })
+  productInterestIds: string | null;
+
+  // UPDATE_NOTES juga dipakai untuk update product_interest_ids (satu
+  // action mencakup kedua field, keduanya opsional per-call) - tidak perlu
+  // action type terpisah.
   @Column({ name: 'action', type: 'varchar', length: 15, default: 'CREATE' })
   action: 'CREATE' | 'UPDATE_NOTES';
 

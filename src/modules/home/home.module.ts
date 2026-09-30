@@ -6,6 +6,8 @@ import { ExhcompanySpace } from '../venue/entities/exhcompany-space.entity';
 import { VenueSpace } from '../venue/entities/venue-space.entity';
 import { CheckinBooth } from '../booth/entities/checkin-booth.entity';
 import { MeetingsModule } from '../meetings/meetings.module';
+import { BoothModule } from '../booth/booth.module';
+import { ChatModule } from '../chat/chat.module';
 import { HomeController } from './home.controller';
 import { HomeService } from './home.service';
 
@@ -14,6 +16,8 @@ import { HomeService } from './home.service';
     TypeOrmModule.forFeature([ExhibitorCompany, ExhcompanySpace, VenueSpace, CheckinBooth]),
     PassportModule,
     MeetingsModule,
+    BoothModule,
+    ChatModule,
   ],
   controllers: [HomeController],
   providers: [HomeService],
