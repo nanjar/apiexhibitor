@@ -1,6 +1,11 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { IsBoolean, IsNotEmpty, IsOptional, IsString, MaxLength } from 'class-validator';
+import { IsNotEmpty, IsOptional, IsString, MaxLength } from 'class-validator';
 
+/**
+ * Selalu bikin akun user_level='OPR' - permission-nya FIXED (cuma scan QR,
+ * tidak bisa chat), makanya gak ada field canScan/canChat di sini seperti
+ * di InviteMemberDto. Lihat MembersService.createNewMember().
+ */
 export class CreateMemberDto {
   @ApiProperty({ description: 'Nama lengkap - orang belum pernah terdaftar sama sekali' })
   @IsString()
@@ -25,14 +30,4 @@ export class CreateMemberDto {
   @IsString()
   @MaxLength(255)
   jobTitle?: string;
-
-  @ApiPropertyOptional({ default: true })
-  @IsOptional()
-  @IsBoolean()
-  canScan?: boolean;
-
-  @ApiPropertyOptional({ default: true })
-  @IsOptional()
-  @IsBoolean()
-  canChat?: boolean;
 }

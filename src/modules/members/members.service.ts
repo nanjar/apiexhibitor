@@ -138,8 +138,15 @@ export class MembersService {
       throw new ConflictException('Exhibitor ini sudah jadi anggota (atau masih diundang)');
     }
 
+    // OPR permission-nya FIXED (scan only), sama seperti di updatePermission().
+    if (dto.canChat === true && contact.userLevel === 'OPR') {
+      throw new BadRequestException(
+        'Exhibitor dengan user_level OPR cuma boleh scan QR, tidak bisa diberi akses chat',
+      );
+    }
+
     const canScan = dto.canScan ?? true;
-    const canChat = dto.canChat ?? true;
+    const canChat = contact.userLevel === 'OPR' ? false : dto.canChat ?? true;
     const now = new Date();
 
     if (member) {
@@ -185,10 +192,14 @@ export class MembersService {
    * lalu balik lagi ke Postgres lewat pull-sync (≤6 menit total: push
    * ≤1 menit + pull 5 menit). Selama itu, tampil sebagai "pending" di
    * listMembers() (lihat correlationKey di sana).
+   *
+   * userLevel SELALU 'OPR' - exhibitor app cuma boleh bikin akun operator
+   * (bukan ADM, yang murni domain panel admin PHP lama). OPR permission-nya
+   * FIXED: cuma bisa scan QR (canScan=Y), TIDAK bisa chat (canChat=N) -
+   * bukan pilihan yang bisa diubah lewat DTO, lihat juga guard di
+   * updatePermission().
    */
   async createNewMember(user: CurrentExhibitor, dto: CreateMemberDto) {
-    const canScan = dto.canScan ?? true;
-    const canChat = dto.canChat ?? true;
     const now = new Date();
 
     const action = this.memberActionRepo.create({
@@ -197,13 +208,13 @@ export class MembersService {
       exhibitorId: null,
       action: 'CREATE',
       actorExhibitorId: user.exhibitorId,
-      canScan: canScan ? 'Y' : 'N',
-      canChat: canChat ? 'Y' : 'N',
+      canScan: 'Y',
+      canChat: 'N',
       fullname: dto.fullname,
       countryCode: dto.countryCode ?? '62',
       phone: dto.phone,
       jobTitle: dto.jobTitle ?? null,
-      userLevel: 'STAFF',
+      userLevel: 'OPR',
       createdAt: now,
     });
     await this.memberActionRepo.save(action);
@@ -213,9 +224,10 @@ export class MembersService {
       actionId: action.id,
       fullname: dto.fullname,
       phone: dto.phone,
+      userLevel: 'OPR',
       memberStatus: 'INVITED',
-      canScan,
-      canChat,
+      canScan: true,
+      canChat: false,
     };
   }
 
@@ -263,6 +275,19 @@ export class MembersService {
     const member = await this.getMemberOrThrow(user.eventsId, exhibitorId);
     if (member.memberStatus === 'REMOVED') {
       throw new ConflictException('Tidak bisa ubah permission exhibitor yang sudah dihapus');
+    }
+
+    // OPR permission-nya FIXED (scan only) - jangan biarkan siapa pun
+    // (termasuk owner) menyalakan chat untuk exhibitor level OPR.
+    if (dto.canChat === true) {
+      const contact = await this.contactRepo.findOne({
+        where: { eventsId: user.eventsId, id: exhibitorId },
+      });
+      if (contact?.userLevel === 'OPR') {
+        throw new BadRequestException(
+          'Exhibitor dengan user_level OPR cuma boleh scan QR, tidak bisa diberi akses chat',
+        );
+      }
     }
 
     if (dto.canScan !== undefined) member.canScan = dto.canScan ? 'Y' : 'N';
