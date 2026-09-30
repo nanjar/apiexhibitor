@@ -8,6 +8,10 @@ import { MeetingMemberV2 } from '../meetings/entities/meeting-member-v2.entity';
 import { EventsMeetingV2 } from '../meetings/entities/events-meeting-v2.entity';
 import { ExhibitorHaveCompany } from '../exhibitors/entities/exhibitor-have-company.entity';
 import { ExhibitorProduct } from '../reports/entities/exhibitor-product.entity';
+import { ExhibitorCompany } from '../exhibitors/entities/exhibitor-company.entity';
+import { ExhibitorContact } from '../exhibitors/entities/exhibitor-contact.entity';
+import { ExhibitorMemberStatus } from '../exhibitors/entities/exhibitor-member-status.entity';
+import { VenueModule } from '../venue/venue.module';
 import { BoothController } from './booth.controller';
 import { BoothService } from './booth.service';
 
@@ -21,7 +25,11 @@ import { BoothService } from './booth.service';
       EventsMeetingV2,
       ExhibitorHaveCompany,
       ExhibitorProduct,
+      ExhibitorCompany,
+      ExhibitorContact,
+      ExhibitorMemberStatus,
     ]),
+    VenueModule,
     PassportModule,
   ],
   controllers: [BoothController],

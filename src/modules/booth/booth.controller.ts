@@ -14,6 +14,12 @@ import { CurrentUser, CurrentExhibitor } from '../../common/decorators/current-e
 export class BoothController {
   constructor(private readonly boothService: BoothService) {}
 
+  // Booth Information - profil company sendiri, lokasi booth, produk, PIC.
+  @Get('info')
+  getBoothInfo(@CurrentUser() user: CurrentExhibitor) {
+    return this.boothService.getBoothInfo(user);
+  }
+
   @Get('leads')
   @ApiQuery({ name: 'temperature', enum: ['Hot', 'Warm', 'Cold'], required: false })
   @ApiQuery({ name: 'today', required: false, type: Boolean })

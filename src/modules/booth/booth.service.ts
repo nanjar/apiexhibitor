@@ -1,6 +1,6 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { In, Repository } from 'typeorm';
 import { ExhibitorLeadSync } from './entities/exhibitor-lead-sync.entity';
 import { ExhibitorLeadAction } from './entities/exhibitor-lead-action.entity';
 import { GuestsTicket } from '../guests/entities/guests-ticket.entity';
@@ -8,6 +8,10 @@ import { MeetingMemberV2 } from '../meetings/entities/meeting-member-v2.entity';
 import { EventsMeetingV2 } from '../meetings/entities/events-meeting-v2.entity';
 import { ExhibitorHaveCompany } from '../exhibitors/entities/exhibitor-have-company.entity';
 import { ExhibitorProduct } from '../reports/entities/exhibitor-product.entity';
+import { ExhibitorCompany } from '../exhibitors/entities/exhibitor-company.entity';
+import { ExhibitorContact } from '../exhibitors/entities/exhibitor-contact.entity';
+import { ExhibitorMemberStatus } from '../exhibitors/entities/exhibitor-member-status.entity';
+import { BoothResolverService } from '../venue/booth-resolver.service';
 import { CurrentExhibitor } from '../../common/decorators/current-exhibitor.decorator';
 import { ScanLeadDto } from './dto/scan-lead.dto';
 import { ManualLeadDto } from './dto/manual-lead.dto';
@@ -47,6 +51,13 @@ export class BoothService {
     private readonly haveCompanyRepo: Repository<ExhibitorHaveCompany>,
     @InjectRepository(ExhibitorProduct)
     private readonly productRepo: Repository<ExhibitorProduct>,
+    @InjectRepository(ExhibitorCompany)
+    private readonly companyRepo: Repository<ExhibitorCompany>,
+    @InjectRepository(ExhibitorContact)
+    private readonly contactRepo: Repository<ExhibitorContact>,
+    @InjectRepository(ExhibitorMemberStatus)
+    private readonly memberStatusRepo: Repository<ExhibitorMemberStatus>,
+    private readonly boothResolver: BoothResolverService,
   ) {}
 
   // "12,15,20" -> [12,15,20]. String kosong/null -> [].
@@ -315,6 +326,77 @@ export class BoothService {
   async countHotLeads(user: CurrentExhibitor): Promise<number> {
     const { leads } = await this.listLeads(user);
     return leads.filter((l) => l.temperature === 'Hot').length;
+  }
+
+  /**
+   * Booth Information - profil company sendiri + lokasi booth (venue/
+   * hall/booth label, dari BoothResolverService yang sama dipakai
+   * Companies directory) + daftar produk company + PIC (user_level='ADM')
+   * + jumlah anggota booth aktif. Selalu untuk booth yang lagi login
+   * (user.companyId/venueId/spaceId dari JWT), bukan company lain.
+   */
+  async getBoothInfo(user: CurrentExhibitor) {
+    const [company, booth, products, admins, activeMemberCount] = await Promise.all([
+      this.companyRepo.findOne({ where: { eventsId: user.eventsId, id: user.companyId } }),
+      this.boothResolver.resolveOne(user.eventsId, user.companyId),
+      this.productRepo.find({
+        where: { eventsId: user.eventsId, companyId: user.companyId, approvalStatus: 'AP' },
+        order: { productName: 'ASC' },
+      }),
+      this.contactRepo.find({
+        where: { eventsId: user.eventsId, companyId: user.companyId, userLevel: 'ADM' },
+      }),
+      this.countActiveMembers(user.eventsId, user.companyId),
+    ]);
+
+    if (!company) {
+      throw new NotFoundException('Company tidak ditemukan');
+    }
+
+    return {
+      company: {
+        id: company.id,
+        companyName: company.companyName,
+        logo: company.logo,
+        details: company.details,
+        country: company.country,
+        companyWebsite: company.companyWebsite,
+        companyProfileUrl: company.companyProfileUrl,
+      },
+      venueName: booth.venueName,
+      hallLabel: booth.hallLabel,
+      boothLabel: booth.boothLabel,
+      products: products.map((p) => ({
+        id: p.id,
+        productName: p.productName,
+        productLogo: p.productLogo,
+        productDescription: p.productDescription,
+      })),
+      admins: admins.map((a) => ({
+        id: a.id,
+        fullname: a.fullname,
+        jobTitle: a.jobTitle,
+        phone: a.phone,
+        email: a.exhibitorEmail,
+      })),
+      activeMemberCount,
+    };
+  }
+
+  // Jumlah anggota booth berstatus ACTIVE untuk company ini - dihitung
+  // via exhibitor_have_company (siapa saja yang terhubung ke company) JOIN
+  // exhibitor_member_status_sync (status ACTIVE).
+  private async countActiveMembers(eventsId: number, companyId: number): Promise<number> {
+    const links = await this.haveCompanyRepo.find({ where: { eventsId, companyId } });
+    if (links.length === 0) return 0;
+    const exhibitorIds = links.map((l) => l.exhibitorId);
+    return this.memberStatusRepo.count({
+      where: {
+        eventsId,
+        exhibitorId: In(exhibitorIds),
+        memberStatus: 'ACTIVE',
+      },
+    });
   }
 
   private toLeadItem(row: ExhibitorLeadSync | ExhibitorLeadAction, pending: boolean) {
